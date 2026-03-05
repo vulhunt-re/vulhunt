@@ -4,7 +4,7 @@
 
 set -eu
 
-REPO="binarly-io/vulhunt-ce"
+REPO="vulhunt-re/vulhunt-ce"
 DATA_URL="https://github.com/vulhunt-re/bias-data/archive/refs/heads/main.zip"
 INSTALL_DIR="${VULHUNT_INSTALL_DIR:-$HOME/.vulhunt-ce}"
 BIN_DIR="${VULHUNT_BIN_DIR:-$INSTALL_DIR/bin}"
@@ -65,10 +65,11 @@ install_data() {
     curl -fSL --progress-bar "$DATA_URL" -o "$temp_dir/data.zip"
 
     info "Extracting auxiliary data to $data_dir..."
-    mkdir -p "$data_dir"
     unzip -q -o "$temp_dir/data.zip" -d "$temp_dir/data_extracted"
 
-    mv "$temp_dir/data_extracted/"*/data/* "$data_dir/"
+    rm -rf "$data_dir"
+    mkdir -p "$(dirname "$data_dir")"
+    mv "$temp_dir/data_extracted/"* "$data_dir"
 }
 
 check_dependencies() {

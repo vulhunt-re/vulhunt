@@ -1,11 +1,11 @@
 # VulHunt CE Installer for Windows
-# Usage: irm https://raw.githubusercontent.com/binarly-io/vulhunt-ce/dev/scripts/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/vulhunt-re/vulhunt-ce/dev/scripts/install.ps1 | iex
 
 #Requires -Version 5.1
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "binarly-io/vulhunt-ce"
+$Repo = "vulhunt-re/vulhunt-ce"
 $DataUrl = "https://github.com/vulhunt-re/bias-data/archive/refs/heads/main.zip"
 $InstallDir = if ($env:VULHUNT_INSTALL_DIR) { $env:VULHUNT_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "vulhunt-ce" }
 $BinDir = if ($env:VULHUNT_BIN_DIR) { $env:VULHUNT_BIN_DIR } else { Join-Path $InstallDir "bin" }
@@ -76,12 +76,19 @@ function Install-StaticData {
     $ProgressPreference = 'Continue'
 
     Write-Info "Extracting auxiliary data to $DataDir..."
-    New-Item -ItemType Directory -Path $DataDir -Force | Out-Null
     Expand-Archive -Path $dataZipPath -DestinationPath $dataExtractPath -Force
 
+    if (Test-Path $DataDir) {
+        Remove-Item -Path $DataDir -Recurse -Force
+    }
+
+    $parentDir = Split-Path -Parent $DataDir
+    if (-not (Test-Path $parentDir)) {
+        New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
+    }
+
     $extractedFolder = Get-ChildItem -Path $dataExtractPath -Directory | Select-Object -First 1
-    $dataFolder = Join-Path $extractedFolder.FullName "data"
-    Get-ChildItem -Path $dataFolder | Move-Item -Destination $DataDir -Force
+    Move-Item -Path $extractedFolder.FullName -Destination $DataDir -Force
 }
 
 function Install-VulHuntCE {
