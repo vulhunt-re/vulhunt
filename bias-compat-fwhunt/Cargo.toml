@@ -1,0 +1,36 @@
+[package]
+name = "bias-compat-fwhunt"
+version = "1.0.0"
+edition = "2021"
+authors = [
+  "Sam L. Thomas <sam@binarly.io>",
+  "Francesco Evangelista <francesco@binarly.io>",
+  "Yegor Vasilenko <yegor@binarly.io>",
+  "Fabio Pagani <fabio@binarly.io>",
+  "Fernando Mercês <fernando@binarly.io>",
+  "Anton Ivanov <anton@binarly.io>",
+  "Lukas Seidel <lukas@binarly.io>",
+  "Claudiu-Vlad Ursache <claudiuv@binarly.io>",
+  "Chris McMahon Stone <chris@binarly.io>",
+]
+
+[dependencies]
+ahash = { version = "0.8", features = ["serde"] }
+bias-core = { version = "1.0", path = "../bias-core" }
+bias = { version = "1.0", path = "../bias" }
+getset = "0.1"
+memchr = "2.5"
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_with = "3"
+serde_yaml = { version = "0.0.17", package = "serde-saphyr" }
+thiserror = "2"
+uuid = { version = "1.1", features = ["serde"] }
+walkdir = "2"
+
+[dev-dependencies]
+tracing-subscriber = "0.3"
+
+[lints]
+workspace = true

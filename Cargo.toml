@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    # VulHunt (command line interface)
+    "bias-vulhunt",
+
+    # Lifter and type database utilities
+    "bias-lutil",
+    "bias-tutil",
+
+    # VulHunt components
+    "bias-vulhunt-engine",
+    "bias-vulhunt-mcp",
+
+    # Analysis framework
+    "bias-core",
+    "bias-core-derive",
+
+    # Analysis orchestration and reporting
+    "bias",
+
+    # Analysis compatibility layers/adapters
+    "bias-compat-fwhunt",
+    "bias-compat-patfind",
+    "bias-compat-flirt",
+
+    # Binary Ninja loader
+    "bias-loader-bndb",
+
+    # Binarly Transparency Platform (BTP) client
+    "bias-btp",
+]
+
+[profile.release]
+lto = "thin"
+
+[profile.production]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
+[profile.triage]
+inherits = "dev"
+opt-level = 3
+
+[workspace.lints.rust]
+mismatched_lifetime_syntaxes = "allow"

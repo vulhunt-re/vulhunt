@@ -1,0 +1,394 @@
+[config]
+default_to_workspace = false
+
+[env]
+LUAJIT_DIR = "target/luajit/LuaJIT"
+LUA_LIB = "${CARGO_MAKE_WORKING_DIRECTORY}/${LUAJIT_DIR}/src"
+LUA_LINK = "static"
+LUA_LIB_NAME = "luajit"
+CARGO_PROFILE = "dev"
+CARGO_OUT_DIR = "debug"
+
+[env.release]
+CARGO_PROFILE = "release"
+CARGO_OUT_DIR = "release"
+
+[tasks.default]
+alias = "build"
+
+[tasks.build]
+clear = true
+description = "Build the workspace"
+dependencies = ["submodules", "luajit", "cargo-build"]
+
+[tasks.install]
+description = "Build and install binaries"
+dependencies = ["install-rust-bins", "install-sleighc"]
+
+[tasks.clean]
+description = "Clean all build artefacts"
+dependencies = ["clean-cargo", "clean-luajit"]
+
+[tasks.submodules]
+description = "Initialise git submodules"
+command = "git"
+args = ["submodule", "update", "--init", "--recursive"]
+
+[tasks.luajit]
+description = "Clone, patch, and build LuaJIT"
+dependencies = ["luajit-clone", "luajit-patch", "luajit-build"]
+
+[tasks.luajit-clone]
+description = "Clone LuaJIT v2.1"
+linux_alias = "luajit-clone-unix"
+mac_alias = "luajit-clone-unix"
+windows_alias = "luajit-clone-windows"
+
+[tasks.luajit-clone-unix]
+private = true
+condition_script = ['test ! -d "${LUAJIT_DIR}/.git"']
+script = [
+  'mkdir -p target/luajit',
+  'git clone https://github.com/LuaJIT/LuaJIT.git -b v2.1 "${LUAJIT_DIR}"',
+]
+
+[tasks.luajit-clone-windows]
+private = true
+condition_script = ['if exist "%LUAJIT_DIR%\\.git" (exit /b 1) else (exit /b 0)']
+script_runner = "cmd"
+script_runner_args = ["/c"]
+script_extension = "cmd"
+script = ['''
+@echo off
+if not exist target\luajit mkdir target\luajit
+git clone https://github.com/LuaJIT/LuaJIT.git -b v2.1 "%LUAJIT_DIR%"
+''']
+
+[tasks.luajit-patch]
+description = "Apply VulHunt patches to LuaJIT"
+dependencies = ["luajit-clone"]
+linux_alias = "luajit-patch-unix"
+mac_alias = "luajit-patch-unix"
+windows_alias = "luajit-patch-windows"
+
+[tasks.luajit-patch-unix]
+private = true
+condition_script = ['test ! -f "${LUAJIT_DIR}/.vulhunt-patched"']
+script = ['''
+cd "${LUAJIT_DIR}"
+git checkout -- .
+git apply "${CARGO_MAKE_WORKING_DIRECTORY}/patches/luajit-vulhunt.patch"
+touch .vulhunt-patched
+''']
+
+[tasks.luajit-patch-windows]
+private = true
+condition_script = ['if exist "%LUAJIT_DIR%\\.vulhunt-patched" (exit /b 1) else (exit /b 0)']
+script_runner = "cmd"
+script_runner_args = ["/c"]
+script_extension = "cmd"
+script = ['''
+@echo off
+cd /d "%LUAJIT_DIR%"
+git checkout -- .
+git apply "%CARGO_MAKE_WORKING_DIRECTORY%\patches\luajit-vulhunt.patch"
+echo.> .vulhunt-patched
+''']
+
+[tasks.luajit-build]
+description = "Build LuaJIT (platform-specific)"
+linux_alias = "luajit-build-linux"
+mac_alias = "luajit-build-mac"
+windows_alias = "luajit-build-windows"
+
+[tasks.luajit-build-mac]
+private = true
+condition_script = ['test ! -f "${LUAJIT_DIR}/src/libluajit.a"']
+script = [
+  'cd "${LUAJIT_DIR}" && MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion) make BUILDMODE=static',
+]
+
+[tasks.luajit-build-linux]
+private = true
+condition_script = ['test ! -f "${LUAJIT_DIR}/src/libluajit.a"']
+script = [
+  'cd "${LUAJIT_DIR}" && make BUILDMODE=static',
+]
+
+[tasks.luajit-build-windows]
+private = true
+env = { "LUA_LIB_NAME" = "lua51" }
+condition_script = ['if exist "%LUAJIT_DIR%\\src\\lua51.lib" (exit /b 1) else (exit /b 0)']
+script_runner = "cmd"
+script_runner_args = ["/c"]
+script_extension = "cmd"
+script = ['cd /d "%LUAJIT_DIR%\\src" && msvcbuild.bat static']
+
+[tasks.cargo-build]
+description = "Build workspace with cargo"
+linux_alias = "cargo-build-unix"
+mac_alias = "cargo-build-unix"
+windows_alias = "cargo-build-windows"
+
+[tasks.cargo-build-unix]
+private = true
+command = "cargo"
+args = ["build", "--profile", "${CARGO_PROFILE}", "${@}"]
+
+[tasks.cargo-build-windows]
+private = true
+env = { "LUA_LIB_NAME" = "lua51" }
+command = "cargo"
+args = ["build", "--profile", "${CARGO_PROFILE}", "${@}"]
+
+[tasks.install-rust-bins]
+description = "Install Rust binaries (vulhunt-ce, bias-tutil, bias-lutil)"
+linux_alias = "install-rust-bins-unix"
+mac_alias = "install-rust-bins-unix"
+windows_alias = "install-rust-bins-windows"
+
+[tasks.install-rust-bins-unix]
+private = true
+script = ['''
+INSTALL_ARGS=""
+if [ -n "${INSTALL_PREFIX}" ]; then
+  INSTALL_ARGS="--root ${INSTALL_PREFIX}"
+fi
+cargo install --force --path bias-vulhunt ${INSTALL_ARGS} ${@}
+cargo install --force --path bias-tutil ${INSTALL_ARGS} ${@}
+cargo install --force --path bias-lutil ${INSTALL_ARGS} ${@}
+''']
+
+[tasks.install-rust-bins-windows]
+private = true
+env = { "LUA_LIB_NAME" = "lua51" }
+script_runner = "cmd"
+script_runner_args = ["/c"]
+script_extension = "cmd"
+script = ['''
+@echo off
+set INSTALL_ARGS=
+if defined INSTALL_PREFIX set INSTALL_ARGS=--root %INSTALL_PREFIX%
+cargo install --force --path bias-vulhunt %INSTALL_ARGS% %*
+cargo install --force --path bias-tutil %INSTALL_ARGS% %*
+cargo install --force --path bias-lutil %INSTALL_ARGS% %*
+''']
+
+[tasks.install-sleighc]
+description = "Install sleighc binary"
+linux_alias = "install-sleighc-unix"
+mac_alias = "install-sleighc-unix"
+windows_alias = "install-sleighc-windows"
+
+[tasks.install-sleighc-unix]
+private = true
+script = ['''
+# Resolve install bin directory
+if [ -n "${INSTALL_PREFIX}" ]; then
+  BIN_DIR="${INSTALL_PREFIX}/bin"
+elif [ -n "${CARGO_INSTALL_ROOT}" ]; then
+  BIN_DIR="${CARGO_INSTALL_ROOT}/bin"
+elif [ -n "${CARGO_HOME}" ]; then
+  BIN_DIR="${CARGO_HOME}/bin"
+else
+  BIN_DIR="${HOME}/.cargo/bin"
+fi
+
+# find sleighc in build artefacts
+SLEIGHC=$(find target/${CARGO_OUT_DIR}/build -path "*/bias-core-*/out/build/decompiler/ghidra/sleighc" -type f 2>/dev/null | head -n 1)
+
+if [ -z "${SLEIGHC}" ]; then
+  echo "error: sleighc binary not found in build artefacts"
+  exit 1
+fi
+
+mkdir -p "${BIN_DIR}"
+cp "${SLEIGHC}" "${BIN_DIR}/sleighc"
+chmod +x "${BIN_DIR}/sleighc"
+''']
+
+[tasks.install-sleighc-windows]
+private = true
+script_runner = "cmd"
+script_runner_args = ["/c"]
+script_extension = "cmd"
+script = ['''
+@echo off
+setlocal enabledelayedexpansion
+
+REM resolve install bin directory
+if defined INSTALL_PREFIX (
+  set "BIN_DIR=%INSTALL_PREFIX%\bin"
+) else if defined CARGO_INSTALL_ROOT (
+  set "BIN_DIR=%CARGO_INSTALL_ROOT%\bin"
+) else if defined CARGO_HOME (
+  set "BIN_DIR=%CARGO_HOME%\bin"
+) else (
+  set "BIN_DIR=%USERPROFILE%\.cargo\bin"
+)
+
+REM find sleighc.exe in build artefacts
+set "SLEIGHC="
+for /r target\%CARGO_OUT_DIR%\build %%f in (sleighc.exe) do (
+  echo %%f | findstr /c:"bias-core" >nul && if exist "%%f" set "SLEIGHC=%%f"
+)
+
+if not defined SLEIGHC (
+  echo error: sleighc.exe not found in build artefacts
+  exit /b 1
+)
+
+if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
+copy /y "%SLEIGHC%" "%BIN_DIR%\sleighc.exe"
+''']
+
+[tasks.clean-cargo]
+description = "Clean cargo build artefacts"
+command = "cargo"
+args = ["clean"]
+
+[tasks.clean-luajit]
+description = "Remove LuaJIT build directory"
+ignore_errors = true
+linux_alias = "clean-luajit-unix"
+mac_alias = "clean-luajit-unix"
+windows_alias = "clean-luajit-windows"
+
+[tasks.clean-luajit-unix]
+private = true
+ignore_errors = true
+script = ['rm -rf target/luajit']
+
+[tasks.clean-luajit-windows]
+private = true
+ignore_errors = true
+script_runner = "cmd"
+script_runner_args = ["/c"]
+script_extension = "cmd"
+script = ['if exist target\\luajit rmdir /s /q target\\luajit']
+
+[tasks.package]
+clear = true
+description = "Build distributable packages for current platform"
+dependencies = ["build", "package-prepare", "package-run"]
+
+[tasks.package-prepare]
+description = "Copy sleighc to target/release for packaging"
+private = true
+linux_alias = "package-prepare-unix"
+mac_alias = "package-prepare-unix"
+windows_alias = "package-prepare-windows"
+
+[tasks.package-prepare-unix]
+private = true
+script = ['''
+SLEIGHC=$(find target/${CARGO_OUT_DIR}/build -path "*/bias-core-*/out/build/decompiler/ghidra/sleighc" -type f 2>/dev/null | head -n 1)
+if [ -z "${SLEIGHC}" ]; then
+  echo "error: sleighc binary not found in build artefacts"
+  exit 1
+fi
+cp "${SLEIGHC}" target/${CARGO_OUT_DIR}/sleighc
+chmod +x target/${CARGO_OUT_DIR}/sleighc
+''']
+
+[tasks.package-prepare-windows]
+private = true
+script_runner = "cmd"
+script_runner_args = ["/c"]
+script_extension = "cmd"
+script = ['''
+@echo off
+setlocal enabledelayedexpansion
+set "SLEIGHC="
+for /r target\%CARGO_OUT_DIR%\build %%f in (sleighc.exe) do (
+  echo %%f | findstr /c:"bias-core" >nul && if exist "%%f" set "SLEIGHC=%%f"
+)
+if not defined SLEIGHC (
+  echo error: sleighc.exe not found in build artefacts
+  exit /b 1
+)
+copy /y "%SLEIGHC%" target\%CARGO_OUT_DIR%\sleighc.exe
+''']
+
+[tasks.package-run]
+description = "Run cargo-packager"
+private = true
+linux_alias = "package-run-unix"
+mac_alias = "package-run-unix"
+windows_alias = "package-run-windows"
+
+[tasks.package-run-unix]
+private = true
+command = "cargo"
+args = ["packager", "--release", "-p", "bias-vulhunt"]
+
+[tasks.package-run-windows]
+private = true
+env = { "LUA_LIB_NAME" = "lua51" }
+command = "cargo"
+args = ["packager", "--release", "-p", "bias-vulhunt"]
+
+[tasks.package-deb]
+description = "Build Debian package (.deb)"
+dependencies = ["build", "package-prepare"]
+command = "cargo"
+args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "deb"]
+
+[tasks.package-appimage]
+description = "Build AppImage (.AppImage)"
+dependencies = ["build", "package-prepare"]
+command = "cargo"
+args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "appimage"]
+
+[tasks.package-dmg]
+description = "Build macOS disk image (.dmg)"
+dependencies = ["build", "package-prepare"]
+command = "cargo"
+args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "dmg"]
+
+[tasks.package-app]
+description = "Build macOS app bundle (.app)"
+dependencies = ["build", "package-prepare"]
+command = "cargo"
+args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "app"]
+
+[tasks.package-nsis]
+description = "Build Windows NSIS installer (.exe)"
+dependencies = ["build", "package-prepare"]
+env = { "LUA_LIB_NAME" = "lua51" }
+command = "cargo"
+args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "nsis"]
+
+[tasks.package-wix]
+description = "Build Windows MSI installer (.msi)"
+dependencies = ["build", "package-prepare"]
+env = { "LUA_LIB_NAME" = "lua51" }
+command = "cargo"
+args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "wix"]
+
+[tasks.package-all]
+description = "Build all package formats for current platform"
+dependencies = ["build", "package-prepare", "package-all-run"]
+
+[tasks.package-all-run]
+description = "Run cargo-packager with all formats"
+private = true
+linux_alias = "package-all-linux"
+mac_alias = "package-all-mac"
+windows_alias = "package-all-windows"
+
+[tasks.package-all-linux]
+private = true
+command = "cargo"
+args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "deb,appimage"]
+
+[tasks.package-all-mac]
+private = true
+command = "cargo"
+args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "dmg,app"]
+
+[tasks.package-all-windows]
+private = true
+env = { "LUA_LIB_NAME" = "lua51" }
+command = "cargo"
+args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "nsis,wix"]

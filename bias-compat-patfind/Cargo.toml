@@ -1,0 +1,26 @@
+[package]
+name = "bias-compat-patfind"
+version = "1.0.0"
+edition = "2021"
+authors = [
+  "Sam L. Thomas <sam@binarly.io>",
+  "Francesco Evangelista <francesco@binarly.io>",
+  "Yegor Vasilenko <yegor@binarly.io>",
+  "Fabio Pagani <fabio@binarly.io>",
+  "Fernando Mercês <fernando@binarly.io>",
+  "Anton Ivanov <anton@binarly.io>",
+  "Lukas Seidel <lukas@binarly.io>",
+  "Claudiu-Vlad Ursache <claudiuv@binarly.io>",
+  "Chris McMahon Stone <chris@binarly.io>",
+]
+
+[dependencies]
+fugue-bytes = "0.2"
+nom = "7"
+regex = "1"
+serde = "1"
+serde_yaml = { version = "0.0.17", package = "serde-saphyr" }
+thiserror = "1"
+
+[lints]
+workspace = true

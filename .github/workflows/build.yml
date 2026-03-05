@@ -1,0 +1,244 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Create a GitHub release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+            installer_glob: "*.deb"
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+            installer_glob: "*.deb"
+          - platform: macos-aarch64
+            runner: macos-14
+            installer_glob: "*.dmg"
+          - platform: windows-x86_64
+            runner: windows-latest
+            installer_glob: "*.exe"
+
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.platform }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.platform }}-cargo-
+
+      - name: Install cargo-make and cargo-packager
+        run: cargo install cargo-make cargo-packager
+
+      - name: Install system deps (Linux)
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc >/dev/null
+          CODENAME=$(lsb_release -cs)
+          echo "deb http://apt.llvm.org/${CODENAME}/ llvm-toolchain-${CODENAME}-20 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-20.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            clang-20 lld-20 cmake libgmp-dev libmpfr-dev
+
+      - name: Install packaging deps (Linux)
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: sudo apt-get install -y --no-install-recommends libfuse2
+
+      - name: Install system deps (macOS)
+        if: startsWith(matrix.runner, 'macos')
+        run: brew install -q llvm@20 cmake gmp mpfr
+
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        uses: KyleMayes/install-llvm-action@a7a1a882e2d06ebe05d5bb97c3e1f8c984ae96fc
+        with:
+          version: "20"
+
+      - name: Install NSIS (Windows)
+        if: runner.os == 'Windows'
+        run: choco install nsis -y
+
+      - name: Set CC/CXX (Linux)
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: |
+          echo "CC=clang-20" >> "$GITHUB_ENV"
+          echo "CXX=clang++-20" >> "$GITHUB_ENV"
+
+      - name: Set CC/CXX (macOS)
+        if: startsWith(matrix.runner, 'macos')
+        run: |
+          LLVM_PREFIX="$(brew --prefix llvm@20)"
+          echo "CC=${LLVM_PREFIX}/bin/clang" >> "$GITHUB_ENV"
+          echo "CXX=${LLVM_PREFIX}/bin/clang++" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion)" >> "$GITHUB_ENV"
+
+      - name: Set LIBCLANG_PATH (Windows)
+        if: runner.os == 'Windows'
+        run: echo "LIBCLANG_PATH=${{ env.LLVM_PATH }}/lib" >> $env:GITHUB_ENV
+
+      - name: Setup MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -property installationPath
+          $vcvars = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+          cmd /c "`"$vcvars`" && set" | ForEach-Object {
+            if ($_ -match "^([^=]+)=(.*)$") {
+              echo "$($matches[1])=$($matches[2])" >> $env:GITHUB_ENV
+            }
+          }
+
+      - name: Build
+        run: cargo make --profile=release build
+
+      - name: Locate sleighc (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          SLEIGHC=$(find target/release/build -path "*/bias-core-*/out/build/decompiler/ghidra/sleighc" -type f 2>/dev/null | head -n 1)
+          if [ -z "$SLEIGHC" ]; then
+            echo "::error::sleighc not found in build artefacts"
+            exit 1
+          fi
+          echo "SLEIGHC_PATH=$SLEIGHC" >> "$GITHUB_ENV"
+
+      - name: Locate sleighc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sleighc = Get-ChildItem -Path target/release/build -Recurse -Filter "sleighc.exe" |
+            Where-Object { $_.FullName -match "bias-core-" -and $_.FullName -match "ghidra" } |
+            Select-Object -First 1
+          if (-not $sleighc) {
+            Write-Error "sleighc.exe not found in build artefacts"
+            exit 1
+          }
+          echo "SLEIGHC_PATH=$($sleighc.FullName)" >> $env:GITHUB_ENV
+
+      - name: Ensure distribution directory is fresh
+        run: rm -rf target/dist/
+        shell: bash
+
+      - name: Build installer (Linux)
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: cargo make package-deb
+
+      - name: Build installer (macOS)
+        if: startsWith(matrix.runner, 'macos')
+        run: cargo make package-dmg
+
+      - name: Build installer (Windows)
+        if: runner.os == 'Windows'
+        run: cargo make package-nsis
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          STAGING="vulhunt-ce-${{ steps.version.outputs.version }}-${{ matrix.platform }}"
+          mkdir "$STAGING"
+          cp target/release/vulhunt-ce "$STAGING/"
+          cp target/release/bias-lutil "$STAGING/"
+          cp target/release/bias-tutil "$STAGING/"
+          cp "$SLEIGHC_PATH" "$STAGING/sleighc"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $staging = "vulhunt-ce-${{ steps.version.outputs.version }}-${{ matrix.platform }}"
+          New-Item -ItemType Directory -Path $staging
+          Copy-Item target/release/vulhunt-ce.exe "$staging/"
+          Copy-Item target/release/bias-lutil.exe "$staging/"
+          Copy-Item target/release/bias-tutil.exe "$staging/"
+          Copy-Item $env:SLEIGHC_PATH "$staging/sleighc.exe"
+
+      - name: Upload binary bundle artefacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: vulhunt-ce-${{ steps.version.outputs.version }}-${{ matrix.platform }}
+          path: vulhunt-ce-${{ steps.version.outputs.version }}-${{ matrix.platform }}/*
+
+      - name: Upload installer artefact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: vulhunt-ce-${{ steps.version.outputs.version }}-${{ matrix.platform }}-installer
+          path: target/dist/${{ matrix.installer_glob }}
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artefacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+
+      - name: Prepare release assets
+        run: |
+          for dir in vulhunt-ce-*; do
+            [[ "$dir" == *-installer ]] && continue
+            [ -d "$dir" ] && (cd "$dir" && zip -j "../${dir}.zip" *)
+          done
+
+          for dir in vulhunt-ce-*-installer; do
+            [ -d "$dir" ] && mv "$dir"/* .
+          done
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Release $GITHUB_REF_NAME" \
+            --generate-notes \
+            vulhunt-ce-*.zip \
+            *.dmg *.deb *.exe 2>/dev/null || true

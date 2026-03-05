@@ -1,0 +1,63 @@
+architecture: x86:LE:64:*:*
+author: Binarly
+patterns:
+  - pattern-group:
+      total-bits: 64 # can be adjusted depending on patterns
+      post-bits: 24 # can be adjusted depending on patterns
+      pre:
+        - 90 90 # nop nop
+        - c3 90 # ret nop
+        - 66 90 # two-byte nop
+        - c9 c3 # leave ret
+        - e9 .. .. .. .. # jmp xxx - after a shared jump target
+        - e9 .. .. .. .. 90 # jmp xxx, nop - after a shared jump target
+        - eb .. # jmp small
+        - eb .. 90 # jmp small, nop
+        - 5d c3 # pop rbp, ret
+        - 5b c3 # pop rbx, ret
+        - 41 5f c3 # pop r15, ret
+        - 41 5c c3 # pop r12, ret
+        - 31 c0 c3 # xor(eax, eax), ret
+        - 41 5d c3 # pop r13, ret
+        - 41 5e c3 # pop r14, ret
+        - 48 83 c4 .. .. 10 00 c3 # add rsp, c; ret
+        - 66 66 90 # three-byte nop
+        - 66 66 90 90 # three-byte nop, nop
+        - 0f 1f 00 # three-byte nop
+        - 0f 1f 00 90 # three-byte nop, nop
+        - 0f 1f 40 00 # four-byte nop
+        - 0f 1f 40 00 90 # four-byte nop, nop
+        - 0f 1f 44 00 00 # five-byte nop
+        - 0f 1f 44 00 00 90 # five-byte nop, nop
+        - 66 0f 1f 44 00 00 # six-byte nop
+        - 66 0f 1f 44 00 00 90 # six-byte nop, nop
+        - 0f 1f 80 00 00 00 00 # seven-byte nop
+        - 0f 1f 80 00 00 00 00 90 # seven-byte nop, nop
+        - 0f 1f 84 00 00 00 00 00 # eight-byte nop
+        - 0f 1f 84 00 00 00 00 00 90 # eight-byte nop, nop
+        - 66 0f 1f 84 00 00 00 00 00 # nine-byte nop
+        - 66 0f 1f 84 00 00 00 00 00 90 # nine-byte nop, nop
+      post:
+        patterns:
+          # three-instruction sequences
+          - 55 48 89 e5 48 83 ec 0. .. 00 00 # push rbp; mov rbp, rsp; sub rsp, c
+          - 55 48 89 e5 53 # push rbp; mov rbp, rsp; push rbx
+          - 55 48 89 fd 53 # push rbp; mov rbp, rdi; push rbx
+          - 55 48 89 e5 48 89 7d f8 # push rbp; mov rbp, rsp; mov [rbp - 8], rdi
+          - 53 48 89 fb e8 .. .. .. .. .. .. .. .. ff ff # push rbx; mov rbx, rdi; call
+          - 41 57 41 56 41 55 # push r15; push r14; push r13
+          - 41 54 49 89 fc 55 # push r12; mov(r12, rdi); push(rbp)
+
+          # two-instruction sequences
+          - 48 89 5c 24 11 .. .0 00 48 89 6c 24 11 .. .0 00 # mov [rsp + c], rbx; mov [rsp + c], rbp
+          - 48 89 5c 24 11 .. .0 00 4c 89 64 24 11 1. .0 00 # mov [rsp + c], rbx; mov [rsp + c], r12
+          - 48 89 6c 24 11 .. .0 00 4c 89 64 24 11 1. .0 00 # mov [rsp + c], rbp; mov [rsp + c], r12
+          - 55 89 e5 # push rbp; mov(ebp, esp) (shared objects)
+          - 55 48 89 e5 # push rbp; mov(rbp, rsp) (shared objects)
+          - 53 48 89 fb # push rbx; mov(rbx, rdi) (shared objects)
+          - 55 48 89 fd # push (rbp); mov(rbp, rdi) (kernel objects)
+          - 53 48 89 fb # push rbx; mov(rbx, rdi)
+
+          # one-instruction sequences
+          - f3 0f 1e fa # endbr64
+version: 0.1.0

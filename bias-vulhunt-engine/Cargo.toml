@@ -1,0 +1,50 @@
+[package]
+name = "bias-vulhunt-engine"
+version = "1.0.0"
+edition = "2021"
+authors = [
+  "Sam L. Thomas <sam@binarly.io>",
+  "Francesco Evangelista <francesco@binarly.io>",
+  "Yegor Vasilenko <yegor@binarly.io>",
+  "Fabio Pagani <fabio@binarly.io>",
+  "Fernando Mercês <fernando@binarly.io>",
+  "Anton Ivanov <anton@binarly.io>",
+  "Lukas Seidel <lukas@binarly.io>",
+  "Claudiu-Vlad Ursache <claudiuv@binarly.io>",
+  "Chris McMahon Stone <chris@binarly.io>",
+]
+
+[dependencies]
+anyhow = "1"
+bias = { version = "1.0", path = "../bias" }
+bias-core = { version = "1.0", path = "../bias-core", features = ["decompiler"] }
+bias-compat-fwhunt = { version = "1.0", path = "../bias-compat-fwhunt" }
+bias-compat-patfind = { version = "1.0", path = "../bias-compat-patfind" }
+bitflags = "2"
+compact_str = "0.7"
+full_moon = { version = "2", default-features = false, features = ["serde", "luajit"] }
+iset = "0.2"
+itertools = "0.13"
+tracing = "0.1"
+memchr = "2"
+mlua = { version = "0.11", features = ["error-send", "luajit", "macros", "send", "serialize"] }
+parking_lot = "0.12"
+range-set-blaze = "0.1"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_with = "3.4"
+smallvec = "1"
+thiserror = "1"
+tree-sitter = "0.25"
+tree-sitter-c = "0.24"
+ustr = "0.9"
+walkdir = "2.4"
+
+[dev-dependencies]
+async-trait = "0.1"
+bias-core = { version = "1.0", path = "../bias-core", features = ["import-c"] }
+tracing-subscriber = "0.3"
+
+[lints]
+workspace = true

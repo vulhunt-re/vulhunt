@@ -1,0 +1,21 @@
+diff --git a/src/luaconf.h b/src/luaconf.h
+index f47f0680..7b83418e 100644
+--- a/src/luaconf.h
++++ b/src/luaconf.h
+@@ -86,8 +86,14 @@
+ #define LUA_QS		LUA_QL("%s")
+ 
+ /* Various tunables. */
+-#define LUAI_MAXSTACK	65500	/* Max. # of stack slots for a thread (<64K). */
+-#define LUAI_MAXCSTACK	8000	/* Max. # of stack slots for a C func (<10K). */
++#ifndef LUAI_MAXSTACK
++#define LUAI_MAXSTACK	1000000	/* Max. # of stack slots for a thread (<64K). */
++#endif
++
++#ifndef LUAI_MAXCSTACK
++#define LUAI_MAXCSTACK	1000000	/* Max. # of stack slots for a C func (<10K). */
++#endif
++
+ #define LUAI_GCPAUSE	200	/* Pause GC until memory is at 200%. */
+ #define LUAI_GCMUL	200	/* Run GC at 200% of allocation speed. */
+ #define LUA_MAXCAPTURES	32	/* Max. pattern captures. */

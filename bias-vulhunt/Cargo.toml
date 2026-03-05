@@ -1,0 +1,87 @@
+[package]
+name = "bias-vulhunt"
+version = "1.0.0"
+edition = "2021"
+authors = [
+  "Sam L. Thomas <sam@binarly.io>",
+  "Francesco Evangelista <francesco@binarly.io>",
+  "Yegor Vasilenko <yegor@binarly.io>",
+  "Fabio Pagani <fabio@binarly.io>",
+  "Fernando Mercês <fernando@binarly.io>",
+  "Anton Ivanov <anton@binarly.io>",
+  "Lukas Seidel <lukas@binarly.io>",
+  "Claudiu-Vlad Ursache <claudiuv@binarly.io>",
+  "Chris McMahon Stone <chris@binarly.io>",
+]
+
+[[bin]]
+name = "vulhunt-ce"
+path = "src/main.rs"
+
+[features]
+default = []
+bndb = ["dep:bias-loader-bndb", "dep:binaryninjacore-sys", "bias-vulhunt-mcp/bndb"]
+
+[dependencies]
+bias = { version = "1.0", path = "../bias" }
+bias-btp = { version = "1.0", path = "../bias-btp" }
+bias-core = { version = "1.0", path = "../bias-core", features = ["decompiler"] }
+bias-loader-bndb = { path = "../bias-loader-bndb", optional = true }
+bias-vulhunt-engine = { version = "1.0", path = "../bias-vulhunt-engine" }
+bias-vulhunt-mcp = { version = "1.0", path = "../bias-vulhunt-mcp" }
+binaryninjacore-sys = { git = "https://github.com/Vector35/binaryninja-api.git", branch = "stable_5.2", optional = true }
+clap = { version = "4", features = ["env"] }
+mimalloc = { version = "0.1", default-features = false }
+owo-colors = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tracing = { version = "0.1", features = ["release_max_level_warn"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints]
+workspace = true
+
+[package.metadata.packager]
+product-name = "VulHunt Community Edition"
+identifier = "io.binarly.vulhunt-ce"
+description = "VulHunt Community Edition"
+homepage = "https://vulhunt.re"
+authors = [
+  "Sam L. Thomas <sam@binarly.io>",
+  "Francesco Evangelista <francesco@binarly.io>",
+  "Yegor Vasilenko <yegor@binarly.io>",
+  "Fabio Pagani <fabio@binarly.io>",
+  "Fernando Mercês <fernando@binarly.io>",
+  "Anton Ivanov <anton@binarly.io>",
+  "Lukas Seidel <lukas@binarly.io>",
+  "Claudiu-Vlad Ursache <claudiuv@binarly.io>",
+  "Chris McMahon Stone <chris@binarly.io>",
+]
+category = "DeveloperTool"
+out-dir = "../target/dist"
+binaries-dir = "../target/release"
+icons = ["../assets/icon.png"]
+
+[[package.metadata.packager.binaries]]
+path = "vulhunt-ce"
+main = true
+
+[[package.metadata.packager.binaries]]
+path = "bias-tutil"
+
+[[package.metadata.packager.binaries]]
+path = "bias-lutil"
+
+[[package.metadata.packager.binaries]]
+path = "sleighc"
+
+[package.metadata.packager.macos]
+minimum-system-version = "10.15"
+
+[package.metadata.packager.nsis]
+installer-mode = "currentUser"
+
+[package.metadata.packager.deb]
+section = "utils"
+priority = "optional"

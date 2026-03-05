@@ -1,0 +1,18 @@
+allow-branch = ["dev"]
+shared-version = true
+consolidate-commits = true
+
+sign-commit = true
+sign-tag = true
+
+tag = true
+tag-message = "release {{crate_name}} v{{version}}"
+tag-name = "v{{version}}"
+
+push = true
+push-remote = "origin"
+
+publish = true
+verify = true
+
+pre-release-commit-message = "release v{{version}}"

@@ -1,0 +1,77 @@
+[package]
+name = "bias"
+version = "1.0.0"
+edition = "2021"
+authors = [
+  "Sam L. Thomas <sam@binarly.io>",
+  "Francesco Evangelista <francesco@binarly.io>",
+  "Yegor Vasilenko <yegor@binarly.io>",
+  "Fabio Pagani <fabio@binarly.io>",
+  "Fernando Mercês <fernando@binarly.io>",
+  "Anton Ivanov <anton@binarly.io>",
+  "Lukas Seidel <lukas@binarly.io>",
+  "Claudiu-Vlad Ursache <claudiuv@binarly.io>",
+  "Chris McMahon Stone <chris@binarly.io>",
+]
+
+[dependencies]
+ahash = "0.8"
+anyhow = "1"
+arcstr = { version = "1.2", features = ["serde"] }
+async-trait = "0.1"
+bias-core = { version = "1.0", path = "../bias-core", features = ["decompiler"] }
+bias-compat-flirt = { version = "1.0", path = "../bias-compat-flirt" }
+bitflags = "2"
+blake3 = "1.5"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+crossbeam = "0.8"
+dashmap = "5.5"
+debversion = "0.5"
+dyn-clone = "1"
+either = "1"
+flume = "0.11"
+futures = "0.3"
+goblin = { version = "0.4", package = "bias-goblin" }
+hex = { version = "0.4", features = ["serde"] }
+hex-display = "0.3"
+indicatif = "0.17"
+itertools = "0.14"
+tracing = "0.1"
+md-5 = "0.11.0-rc.2"
+memmap2 = "0.9"
+miette = { version = "5.10", features = ["fancy"], package = "bias-miette" }
+nom = "7"
+num_cpus = "1"
+ordered-float = { version = "4", features = ["serde"] }
+ouroboros = "0.18"
+regex = "1"
+rmp-serde = "1.1"
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1"
+sha1 = "0.11.0-rc.2"
+sha2 = "0.11.0-rc.2"
+spdx = "0.10"
+strum = "0.27"
+strum_macros = "0.27"
+thiserror = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+ustr = "0.9"
+uuid = { version = "1", features = ["v4", "v5", "v7", "serde"] }
+vfs = { version = "0.12", package = "bias-vfs" }
+walkdir = "2"
+zip = { version = ">=7.1, <7.2", default-features = false }
+zstd = "0.13"
+
+[build-dependencies]
+prettyplease = "0.2"
+proc-macro2 = "1"
+quote = "1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = { version = "0.0.17", package = "serde-saphyr" }
+syn = { version = "2", features = ["parsing"] }
+
+[lints]
+workspace = true

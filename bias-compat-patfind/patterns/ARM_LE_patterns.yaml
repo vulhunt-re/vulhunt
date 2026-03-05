@@ -1,0 +1,240 @@
+architecture: ARM:LE:32:*:*
+author: Binarly
+patterns:
+- pattern-group:
+    post:
+      context:
+      - name: TMode
+        value: 1
+      patterns:
+      - .. b5 1....... b0
+      - .. b5 00...... 1c
+      - .. b5 .. 46
+      - .. b5 .. 01.01...
+      - .. b5 .. 68
+      - .. b5 .. 01.01... 10...... b0
+      - 1....... b5 .. af
+      - 100..... b0 .0 b5
+      - 00...... 1c .0 b5
+      - .. 01.01... .0 b5
+      - .. 68 .0 b5
+      - 2d e9 .. 0.
+      - 4d f8 04 ed
+    post-bits: 16
+    pre:
+    - '.......0 bd'
+    - '.......0 bd 00 00'
+    - '.......0 bd 00 bf'
+    - '.......0 bd c0 46'
+    - ff ff
+    - c0 46
+    - 70 47
+    - 70 47 00 00
+    - 70 47 c0 46
+    - 70 47 00 bf
+    - 000..... b0 .0 bd
+    - 00 bf
+    - af f3 00 80
+    - bd e8 .. 0.
+    - 46 f7
+    - 5d f8 0....... fb
+    - 5d f8 04 fb
+    - bd e8 .. 100.....
+    total-bits: 32
+- pattern-group:
+    post:
+      context:
+      - name: TMode
+        value: 0
+      patterns:
+      - .. 0. 4d e2 .. .10..... 2d e9
+      - .. 0. 2d e9 .. 0. 4d e2
+      - .. 0. 2d e9 .. .. .. .. .. 0. 4d e2
+      - .. 0. 2d e9 0000000. 010.0000 a0 e1
+      - .. 0. 2d e9
+      - .. 0. 4d e2 .. 0. 2d e5
+      - .. 0. 2d e9 ......00 e0 2d e5
+      - .. 0. 2d e5 .. 0. 4d e2
+      - .. 0. 2d e5 .. .. .. .. .. 0. 4d e2
+      - 08 e0 2d e5
+      - 0d c0 a0 e1 .. .. 2d e9
+      - .. 0. 2d e9
+    post-bits: 16
+    pre:
+    - 0. ff 2f e1
+    - 1e ff 2f e1 00 00 00 00
+    - 1e ff 2f e1 00 00 a0 e1
+    - .. .. .. ea
+    - .. 10.0.... 10.11101 e8
+    - .. 10.0.... 10.11101 e8 00 00 00 00
+    - .. 10.0.... 10.11101 e8 00 00 a0 e1
+    - 08 f0 9d e4
+    - 0e f0 a0 e1
+    - 00 f0 20 e3 00 00 a0 e1
+    - 00 00 a0 e1
+    total-bits: 32
+- pattern:
+    context:
+    - name: TMode
+      value: 0
+    patterns:
+    - .. 0. 4d e2 .. 0. 2d e9
+- pattern:
+    context:
+    - name: TMode
+      value: 0
+    patterns:
+    - .. 0....... 0. e5 0. 0. 2d e9
+- pattern:
+    context:
+    - name: TMode
+      value: 0
+    patterns:
+    - .. .. .. 0. 0. 0. 2d e9
+- pattern:
+    context:
+    - name: TMode
+      value: 0
+    patterns:
+    - .. .. .. 0. .. .. .. 0. 0. 0. 2d e9
+- pattern:
+    context:
+    - name: TMode
+      value: 0
+    patterns:
+    - .. 0. 2d e9
+- pattern:
+    context:
+    - name: TMode
+      value: 0
+    patterns:
+    - .. 0. 2d e9
+- pattern:
+    context:
+    - name: TMode
+      value: 0
+    patterns:
+    - .. 0. 4d e2 .. 0. 2d e5
+- pattern:
+    context:
+    - name: TMode
+      value: 0
+    patterns:
+    - .. 0. 2d e5 .. 0. 4d e2
+- pattern:
+    context:
+    - name: TMode
+      value: 0
+    patterns:
+    - .0 .1...... 2d e9 .. .. .. .. .. 0. 4d e2
+- pattern:
+    context:
+    - name: TMode
+      value: 0
+    patterns:
+    - .. 0. 2d e5 .. .. .. .. .. 0. 4d e2
+- pattern:
+    context:
+    - name: TMode
+      value: 0
+    patterns:
+    - 0d c0 a0 e1 .. .. 2d e9
+- pattern:
+    context:
+    - name: TMode
+      value: 1
+    patterns:
+    - .0 b5 1....... b0
+- pattern:
+    context:
+    - name: TMode
+      value: 1
+    patterns:
+    - 2d e9 .. 010.....
+- pattern:
+    context:
+    - name: TMode
+      value: 1
+    patterns:
+    - .0 b5 00...... 1c
+- pattern:
+    context:
+    - name: TMode
+      value: 1
+    patterns:
+    - .0 b5 .. 46
+- pattern:
+    context:
+    - name: TMode
+      value: 1
+    patterns:
+    - .0 b5 .. 01.01...
+- pattern:
+    context:
+    - name: TMode
+      value: 1
+    patterns:
+    - .0 b5 .. 68
+- pattern:
+    context:
+    - name: TMode
+      value: 1
+    patterns:
+    - .0 b5 .. 01.01... 10...... b0
+- pattern:
+    context:
+    - name: TMode
+      value: 1
+    patterns:
+    - 1...0000 b5 .. af
+- pattern-group:
+    post:
+      context:
+      - name: TMode
+        value: 1
+      patterns:
+      - .. b5 1....... b0
+      - .. b5 00...... 1c
+      - .. b5 .. 46
+      - .. b5 .. 01.01...
+      - .. b5 .. 68
+      - .. b5 .. 01.01... 10...... b0
+      - 1....... b5 .. af
+      - 100..... b0 .0 b5
+      - 00...... 1c .0 b5
+      - .. 01.01... .0 b5
+      - .. 68 .0 b5
+      - 2d e9 .. 0.
+      - 4d f8 04 ed
+      - '...1.... b5'
+      - '...1.... b4'
+      - '.......0 b5'
+    post-bits: 8
+    pre:
+    - '.......0 bd'
+    - '.......0 bd 00 bf'
+    - bd e8 .. 100.....
+    - 70 47
+    - 70 47 00 bf
+    - .. 11110... .. 10.1....
+    - .. 111001..
+    total-bits: 16
+- pattern:
+    context:
+    - name: TMode
+      value: 0
+    patterns:
+    - .. 0. 8f e2 .. 0. 8c e2 .. 0. bc e5
+- pattern:
+    context:
+    - name: TMode
+      value: 1
+    patterns:
+    - 03 b4 01 48 01 90 01 bd
+- pattern:
+    context:
+    - name: TMode
+      value: 1
+    patterns:
+    - 10 b5
+version: 0.1.0

@@ -1,0 +1,25 @@
+[package]
+name = "bias-lutil"
+version = "1.0.0"
+edition = "2024"
+authors = [
+  "Sam L. Thomas <sam@binarly.io>",
+  "Francesco Evangelista <francesco@binarly.io>",
+  "Yegor Vasilenko <yegor@binarly.io>",
+  "Fabio Pagani <fabio@binarly.io>",
+  "Fernando Mercês <fernando@binarly.io>",
+  "Anton Ivanov <anton@binarly.io>",
+  "Lukas Seidel <lukas@binarly.io>",
+  "Claudiu-Vlad Ursache <claudiuv@binarly.io>",
+  "Chris McMahon Stone <chris@binarly.io>",
+]
+
+[[bin]]
+name = "bias-lutil"
+path = "src/main.rs"
+
+[dependencies]
+bias-core = { version = "1.0", path = "../bias-core", features = ["decompiler"] }
+clap = "4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

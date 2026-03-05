@@ -1,0 +1,30 @@
+[package]
+name = "bias-compat-flirt"
+version = "1.0.0"
+edition = "2021"
+authors = [
+  "Sam L. Thomas <sam@binarly.io>",
+  "Francesco Evangelista <francesco@binarly.io>",
+  "Yegor Vasilenko <yegor@binarly.io>",
+  "Fabio Pagani <fabio@binarly.io>",
+  "Fernando Mercês <fernando@binarly.io>",
+  "Anton Ivanov <anton@binarly.io>",
+  "Lukas Seidel <lukas@binarly.io>",
+  "Claudiu-Vlad Ursache <claudiuv@binarly.io>",
+  "Chris McMahon Stone <chris@binarly.io>",
+]
+exclude = ["tests"]
+
+[dependencies]
+bias-core = { version = "1.0", path = "../bias-core" }
+flate2 = "1"
+lancelot-flirt = "0.8"
+memmap2 = "0.9"
+smallvec = "1.13"
+thiserror = "1"
+
+[dev-dependencies]
+hex = "0.4"
+
+[lints]
+workspace = true

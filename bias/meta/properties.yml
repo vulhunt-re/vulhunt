@@ -1,0 +1,71 @@
+#
+# meta-data, relations
+#
+
+- name: metadata/relation/contains
+  constant: METADATA_CONTAINS
+  properties:
+  - informative
+
+- name: metadata/relation/duplicate-of
+  constant: METADATA_DUPLICATE
+  properties:
+  - informative
+  - internal
+
+#
+# meta-data, analysis
+#
+
+- name: metadata/analysis/exceeds-code-size-limit
+  constant: METADATA_ANALYSIS_CODE_SIZE_LIMIT
+  properties:
+  - informative
+
+#
+# meta-data, symbols association
+#
+
+- name: metadata/symbols/dwarf
+  constant: METADATA_SYMBOLS_DWARF
+  properties:
+  - experimental
+  - informative
+
+- name: metadata/symbols/elf
+  constant: METADATA_SYMBOLS_ELF
+  properties:
+  - informative
+
+- name: metadata/symbols/pdb
+  constant: METADATA_SYMBOLS_PDB
+  properties:
+  - informative
+
+#
+# artefacts
+#
+
+- name: artefact/related-component
+  constant: ARTEFACT_RELATED_COMPONENT
+  properties:
+  - artefact
+
+#
+# known, any
+#
+
+- name: malware/known-threat
+  constant: FINDING_KNOWN_THREAT
+
+- name: vulnerability/known-vulnerability
+  constant: FINDING_KNOWN_VULNERABILITY
+
+#
+# patch, any
+#
+
+- name: patch/known-vulnerability
+  constant: FINDING_KNOWN_VULNERABILITY_PATCH
+  properties:
+  - informative

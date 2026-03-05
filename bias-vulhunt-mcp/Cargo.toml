@@ -1,0 +1,38 @@
+[package]
+name = "bias-vulhunt-mcp"
+version = "1.0.0"
+edition = "2024"
+authors = [
+  "Sam L. Thomas <sam@binarly.io>",
+  "Francesco Evangelista <francesco@binarly.io>",
+  "Yegor Vasilenko <yegor@binarly.io>",
+  "Fabio Pagani <fabio@binarly.io>",
+  "Fernando Mercês <fernando@binarly.io>",
+  "Anton Ivanov <anton@binarly.io>",
+  "Lukas Seidel <lukas@binarly.io>",
+  "Claudiu-Vlad Ursache <claudiuv@binarly.io>",
+  "Chris McMahon Stone <chris@binarly.io>",
+]
+
+[features]
+default = []
+bndb = ["dep:bias-loader-bndb"]
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+bias = { version = "1.0", path = "../bias" }
+bias-core = { version = "1.0", path = "../bias-core", features = ["decompiler"] }
+bias-loader-bndb = { path = "../bias-loader-bndb", optional = true }
+bias-vulhunt-engine = { version = "1.0", path = "../bias-vulhunt-engine" }
+mlua = { version = "0.11", features = ["error-send", "luajit", "send"] }
+rust-mcp-sdk = { version = "0.8", package = "bias-rust-mcp-sdk" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+[lints]
+workspace = true
