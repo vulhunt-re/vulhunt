@@ -6,7 +6,7 @@
 $ErrorActionPreference = "Stop"
 
 $Repo = "binarly-io/vulhunt-ce"
-$DataUrl = "https://github.com/binarly-io/binarly-static-data/archive/refs/heads/platform-v2.0.zip"
+$DataUrl = "https://github.com/vulhunt-re/bias-data/archive/refs/heads/main.zip"
 $InstallDir = if ($env:VULHUNT_INSTALL_DIR) { $env:VULHUNT_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "vulhunt-ce" }
 $BinDir = if ($env:VULHUNT_BIN_DIR) { $env:VULHUNT_BIN_DIR } else { Join-Path $InstallDir "bin" }
 $DataDir = Join-Path $env:LOCALAPPDATA "vulhunt\data"

@@ -273,7 +273,7 @@ description = "Build distributable packages for current platform"
 dependencies = ["build", "package-prepare", "package-run"]
 
 [tasks.package-prepare]
-description = "Copy sleighc to target/release for packaging"
+description = "Copy sleighc for packaging"
 private = true
 linux_alias = "package-prepare-unix"
 mac_alias = "package-prepare-unix"
@@ -320,51 +320,51 @@ windows_alias = "package-run-windows"
 [tasks.package-run-unix]
 private = true
 command = "cargo"
-args = ["packager", "--release", "-p", "bias-vulhunt"]
+args = ["packager", "--profile", "${CARGO_PROFILE}", "-p", "bias-vulhunt"]
 
 [tasks.package-run-windows]
 private = true
 env = { "LUA_LIB_NAME" = "lua51" }
 command = "cargo"
-args = ["packager", "--release", "-p", "bias-vulhunt"]
+args = ["packager", "--profile", "${CARGO_PROFILE}", "-p", "bias-vulhunt"]
 
 [tasks.package-deb]
 description = "Build Debian package (.deb)"
 dependencies = ["build", "package-prepare"]
 command = "cargo"
-args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "deb"]
+args = ["packager", "--profile", "${CARGO_PROFILE}", "-p", "bias-vulhunt", "--formats", "deb"]
 
 [tasks.package-appimage]
 description = "Build AppImage (.AppImage)"
 dependencies = ["build", "package-prepare"]
 command = "cargo"
-args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "appimage"]
+args = ["packager", "--profile", "${CARGO_PROFILE}", "-p", "bias-vulhunt", "--formats", "appimage"]
 
 [tasks.package-dmg]
 description = "Build macOS disk image (.dmg)"
 dependencies = ["build", "package-prepare"]
 command = "cargo"
-args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "dmg"]
+args = ["packager", "--profile", "${CARGO_PROFILE}", "-p", "bias-vulhunt", "--formats", "dmg"]
 
 [tasks.package-app]
 description = "Build macOS app bundle (.app)"
 dependencies = ["build", "package-prepare"]
 command = "cargo"
-args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "app"]
+args = ["packager", "--profile", "${CARGO_PROFILE}", "-p", "bias-vulhunt", "--formats", "app"]
 
 [tasks.package-nsis]
 description = "Build Windows NSIS installer (.exe)"
 dependencies = ["build", "package-prepare"]
 env = { "LUA_LIB_NAME" = "lua51" }
 command = "cargo"
-args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "nsis"]
+args = ["packager", "--profile", "${CARGO_PROFILE}", "-p", "bias-vulhunt", "--formats", "nsis"]
 
 [tasks.package-wix]
 description = "Build Windows MSI installer (.msi)"
 dependencies = ["build", "package-prepare"]
 env = { "LUA_LIB_NAME" = "lua51" }
 command = "cargo"
-args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "wix"]
+args = ["packager", "--profile", "${CARGO_PROFILE}", "-p", "bias-vulhunt", "--formats", "wix"]
 
 [tasks.package-all]
 description = "Build all package formats for current platform"
@@ -380,15 +380,15 @@ windows_alias = "package-all-windows"
 [tasks.package-all-linux]
 private = true
 command = "cargo"
-args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "deb,appimage"]
+args = ["packager", "--profile", "${CARGO_PROFILE}", "-p", "bias-vulhunt", "--formats", "deb,appimage"]
 
 [tasks.package-all-mac]
 private = true
 command = "cargo"
-args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "dmg,app"]
+args = ["packager", "--profile", "${CARGO_PROFILE}", "-p", "bias-vulhunt", "--formats", "dmg,app"]
 
 [tasks.package-all-windows]
 private = true
 env = { "LUA_LIB_NAME" = "lua51" }
 command = "cargo"
-args = ["packager", "--release", "-p", "bias-vulhunt", "--formats", "nsis,wix"]
+args = ["packager", "--profile", "${CARGO_PROFILE}", "-p", "bias-vulhunt", "--formats", "nsis,wix"]

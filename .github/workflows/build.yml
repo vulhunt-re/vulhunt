@@ -167,15 +167,15 @@ jobs:
 
       - name: Build installer (Linux)
         if: startsWith(matrix.runner, 'ubuntu')
-        run: cargo make package-deb
+        run: cargo make --profile=release package-deb
 
       - name: Build installer (macOS)
         if: startsWith(matrix.runner, 'macos')
-        run: cargo make package-dmg
+        run: cargo make --profile=release package-dmg
 
       - name: Build installer (Windows)
         if: runner.os == 'Windows'
-        run: cargo make package-nsis
+        run: cargo make --profile=release package-nsis
 
       - name: Package (Unix)
         if: runner.os != 'Windows'

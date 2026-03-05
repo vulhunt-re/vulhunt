@@ -5,7 +5,7 @@
 set -eu
 
 REPO="binarly-io/vulhunt-ce"
-DATA_URL="https://github.com/binarly-io/binarly-static-data/archive/refs/heads/platform-v2.0.zip"
+DATA_URL="https://github.com/vulhunt-re/bias-data/archive/refs/heads/main.zip"
 INSTALL_DIR="${VULHUNT_INSTALL_DIR:-$HOME/.vulhunt-ce}"
 BIN_DIR="${VULHUNT_BIN_DIR:-$INSTALL_DIR/bin}"
 
