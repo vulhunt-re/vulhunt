@@ -40,11 +40,13 @@ function Write-Success {
 }
 
 function Get-Architecture {
-    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-    switch ($arch) {
-        "X64" { return "x86_64" }
-        "Arm64" { return "x86_64" } # no support for aarch6 yet... { return "aarch64" }
-        default { Write-Err "Unsupported architecture: $arch" }
+    $arch = $env:PROCESSOR_ARCHITECTURE
+    if ($arch -eq "AMD64") {
+        return "x86_64"
+    } elseif ($arch -eq "ARM64") {
+        return "x86_64" # no support for aarch64 yet
+    } else {
+        Write-Err "Unsupported architecture: $arch"
     }
 }
 
