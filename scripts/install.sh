@@ -1,11 +1,11 @@
 #!/bin/sh
 # VulHunt CE Installer
-# Usage: curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/binarly-io/vulhunt-ce/dev/scripts/install.sh | sh
+# Usage: curl --proto '=https' --tlsv1.2 -sSf https://sh.vulhunt.re | sh
 
 set -eu
 
-REPO="vulhunt-re/vulhunt-ce"
-DATA_URL="https://github.com/vulhunt-re/bias-data/archive/refs/heads/main.zip"
+REPO="vulhunt-re/vulhunt"
+DATA_URL="https://github.com/vulhunt-re/data/archive/refs/heads/main.zip"
 INSTALL_DIR="${VULHUNT_INSTALL_DIR:-$HOME/.vulhunt-ce}"
 BIN_DIR="${VULHUNT_BIN_DIR:-$INSTALL_DIR/bin}"
 

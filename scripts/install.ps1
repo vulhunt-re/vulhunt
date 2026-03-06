@@ -1,12 +1,12 @@
 # VulHunt CE Installer for Windows
-# Usage: irm https://raw.githubusercontent.com/vulhunt-re/vulhunt-ce/dev/scripts/install.ps1 | iex
+# Usage: irm https://ps.vulhunt.sh | iex
 
 #Requires -Version 5.1
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "vulhunt-re/vulhunt-ce"
-$DataUrl = "https://github.com/vulhunt-re/bias-data/archive/refs/heads/main.zip"
+$Repo = "vulhunt-re/vulhunt"
+$DataUrl = "https://github.com/vulhunt-re/data/archive/refs/heads/main.zip"
 $InstallDir = if ($env:VULHUNT_INSTALL_DIR) { $env:VULHUNT_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "vulhunt-ce" }
 $BinDir = if ($env:VULHUNT_BIN_DIR) { $env:VULHUNT_BIN_DIR } else { Join-Path $InstallDir "bin" }
 $DataDir = Join-Path $env:LOCALAPPDATA "vulhunt\data"
