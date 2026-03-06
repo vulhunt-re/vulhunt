@@ -69,6 +69,67 @@ function Get-DownloadUrl {
     return "https://github.com/$Repo/releases/download/$Version/vulhunt-ce-$verStripped-$Platform.zip"
 }
 
+function Test-VisualCppRedistributable {
+    # Check for Visual C++ Redistributable in registry
+    $vcRuntimePaths = @(
+        "HKLM:\SOFTWARE\Classes\Installer\Dependencies\Microsoft.VC*.runtime-",
+        "HKLM:\SOFTWARE\Microsoft\VisualStudio\*\VC\Runtimes",
+        "HKLM:\SOFTWARE\Wow6432Node\Microsoft\VisualStudio\*\VC\Runtimes"
+    )
+    
+    foreach ($path in $vcRuntimePaths) {
+        if (Test-Path $path) {
+            $runtimes = Get-Item -Path $path -ErrorAction SilentlyContinue
+            if ($runtimes) {
+                return $true
+            }
+        }
+    }
+    
+    return $false
+}
+
+function Install-VisualCppRedistributable {
+    Write-Info "Checking for Visual C++ Redistributable..."
+    
+    if (Test-VisualCppRedistributable) {
+        Write-Success "Visual C++ Redistributable is already installed"
+        return
+    }
+    
+    Write-Warn "Visual C++ Redistributable not found. Installing..."
+    
+    $tempDir = Join-Path $env:TEMP "vcredist-$(Get-Random)"
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    
+    try {
+        $vcRedistUrl = "https://aka.ms/vc14/vc_redist.x64.exe"
+        $vcRedistPath = Join-Path $tempDir "vc_redist.exe"
+        
+        Write-Info "Downloading Visual C++ Redistributable..."
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $vcRedistUrl -OutFile $vcRedistPath -UseBasicParsing
+        $ProgressPreference = 'Continue'
+        
+        Write-Info "Installing Visual C++ Redistributable silently..."
+        $process = Start-Process -FilePath $vcRedistPath -ArgumentList "/quiet", "/norestart" -Wait -PassThru
+        
+        if ($process.ExitCode -eq 0) {
+            Write-Success "Visual C++ Redistributable installed successfully"
+        } else {
+            Write-Warn "Visual C++ Redistributable installation completed with exit code: $($process.ExitCode)"
+        }
+    }
+    catch {
+        Write-Warn "Failed to install Visual C++ Redistributable: $_. Continuing installation anyway..."
+    }
+    finally {
+        if (Test-Path $tempDir) {
+            Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Install-StaticData {
     param([string]$TempDir)
 
@@ -103,6 +164,8 @@ function Install-VulHuntCE {
     $platform = "windows-$arch"
 
     Write-Info "Detected platform: $platform"
+
+    Install-VisualCppRedistributable
 
     Write-Info "Fetching latest release..."
     $version = if ($env:VULHUNT_VERSION) { $env:VULHUNT_VERSION } else { Get-LatestRelease }
