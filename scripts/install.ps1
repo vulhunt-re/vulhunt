@@ -27,6 +27,9 @@ function Write-Err {
     param([string]$Message)
     Write-Host "error: " -ForegroundColor Red -NoNewline
     Write-Host $Message
+    Write-Host ""
+    Write-Host "Press any key to exit..." -ForegroundColor Gray
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit 1
 }
 
@@ -185,6 +188,9 @@ function Install-VulHuntCE {
         Write-Success "Installation complete!"
         Write-Host ""
         Write-Info "Run 'vulhunt-ce --help' to get started"
+        Write-Host ""
+        Write-Host "Press any key to exit..." -ForegroundColor Gray
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     }
     catch {
         Write-Err "Installation failed: $_"
