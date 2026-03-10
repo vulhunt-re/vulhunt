@@ -1,0 +1,14 @@
+FROM cgr.dev/chainguard/glibc-dynamic:latest
+
+LABEL org.opencontainers.image.source="https://github.com/vulhunt-re/vulhunt"
+
+USER nonroot
+
+WORKDIR /opt/vulhunt
+
+COPY --chown=nonroot:nonroot install/ /opt/vulhunt/
+
+ENV PATH="/opt/vulhunt:${PATH}"
+ENV BIAS_DATA="/opt/vulhunt/data"
+
+ENTRYPOINT ["vulhunt-ce"]
