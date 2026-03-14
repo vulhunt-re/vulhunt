@@ -2,7 +2,7 @@
 default_to_workspace = false
 
 [env]
-LLVM_VERSION = "20.1.0"
+LLVM_VERSION = "19.1.7"
 LUAJIT_DIR = "target/luajit/LuaJIT"
 LUA_LIB = "${CARGO_MAKE_WORKING_DIRECTORY}/${LUAJIT_DIR}/src"
 LUA_LINK = "static"
@@ -139,11 +139,11 @@ script = ['''
 rm -rf target/llvm
 mkdir -p target/llvm
 case "$(uname -m)" in
-  x86_64)  ARCH="X64" ;;
-  aarch64) ARCH="ARM64" ;;
+  x86_64)  PKG="LLVM-${LLVM_VERSION}-Linux-X64.tar.xz" ;;
+  aarch64) PKG="clang+llvm-19.1.7-aarch64-linux-gnu.tar.xz" ;;
   *)       echo "Unsupported architecture: $(uname -m)"; exit 1 ;;
 esac
-curl -L "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-${ARCH}.tar.xz" | xz -dc -T0 | tar -xf - -C target/llvm --strip-components=1
+curl -L "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/${PKG}" | xz -dc -T0 | tar -xf - -C target/llvm --strip-components=1
 ''']
 
 [tasks.llvm-download-mac]
@@ -152,7 +152,12 @@ condition_script = ['test ! -f "target/llvm/lib/libclang.dylib"']
 script = ['''
 rm -rf target/llvm
 mkdir -p target/llvm
-curl -L "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-macOS-ARM64.tar.xz" | xz -dc -T0 | tar -xf - -C target/llvm --strip-components=1
+case "$(uname -m)" in
+  x86_64) ARCH="X64" ;;
+  arm64)  ARCH="ARM64" ;;
+  *)       echo "Unsupported architecture: $(uname -m)"; exit 1 ;;
+esac
+curl -L "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-macOS-${ARCH}.tar.xz" | xz -dc -T0 | tar -xf - -C target/llvm --strip-components=1
 ''']
 
 [tasks.llvm-download-windows]
