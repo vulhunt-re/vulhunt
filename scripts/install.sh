@@ -51,6 +51,7 @@ detect_linux_arch() {
 
 detect_macos_arch() {
     case "$(uname -m)" in
+        x86_64|amd64)  echo "x86_64" ;;
         aarch64|arm64) echo "arm64" ;;
         *)             error "Unsupported architecture: $(uname -m)" ;;
     esac
