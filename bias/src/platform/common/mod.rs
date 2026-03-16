@@ -51,6 +51,12 @@ impl FromIterator<(String, String)> for PlatformAttributeMap {
     }
 }
 
+impl FromIterator<(String, serde_json::Value)> for PlatformAttributeMap {
+    fn from_iter<T: IntoIterator<Item = (String, serde_json::Value)>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
 impl FromIterator<KeyValue> for PlatformAttributeMap {
     fn from_iter<T: IntoIterator<Item = KeyValue>>(iter: T) -> Self {
         Self(

@@ -10,6 +10,7 @@ members = [
 
     # VulHunt components
     "bias-vulhunt-engine",
+    "bias-vulhunt-grpc",
     "bias-vulhunt-mcp",
 
     # Analysis framework

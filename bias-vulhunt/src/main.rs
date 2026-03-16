@@ -8,6 +8,7 @@ mod btp;
 mod loader;
 mod mcp;
 mod scan;
+mod service;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -32,6 +33,7 @@ async fn main() {
         .subcommand(mcp::command())
         .subcommand(btp::command())
         .subcommand(ba2::command())
+        .subcommand(service::command())
         .get_matches();
 
     if let Err(e) = run_command(&opts).await {
@@ -46,6 +48,7 @@ async fn run_command(opts: &ArgMatches) -> Result<(), Box<dyn std::error::Error>
         Some(("mcp", sub_m)) => mcp::run(sub_m).await,
         Some(("btp", sub_m)) => btp::run(sub_m).await,
         Some(("ba2", sub_m)) => ba2::run(sub_m).await,
+        Some(("service", sub_m)) => service::run(sub_m).await,
         _ => unreachable!(),
     }
 }

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
-use crate::project::VulHuntProject;
+use bias_vulhunt_engine::project::VulHuntProject;
 use crate::session::VulHuntSessionState;
 
 pub(crate) static TOOLS: LazyLock<HashMap<String, Tool>> = LazyLock::new(|| {
@@ -285,29 +285,6 @@ pub struct VulHuntLoadSignatures {
     signatures: SignatureSpec,
 }
 
-#[derive(Serialize)]
-pub struct VulHuntSignatureLoadResult {
-    loaded_files: Vec<String>,
-    matched_functions: usize,
-}
-
-impl VulHuntSignatureLoadResult {
-    pub fn new(loaded_files: Vec<String>, matched_functions: usize) -> Self {
-        Self {
-            loaded_files,
-            matched_functions,
-        }
-    }
-
-    pub fn loaded_files(&self) -> &[String] {
-        &self.loaded_files
-    }
-
-    pub fn matched_functions(&self) -> usize {
-        self.matched_functions
-    }
-}
-
 impl VulHuntLoadSignatures {
     pub fn execute(self, state: Arc<RwLock<VulHuntSessionState>>) -> Result<Value, String> {
         let mut state = state.blocking_write();
@@ -335,39 +312,6 @@ impl VulHuntLoadSignatures {
 pub struct VulHuntLoadTypes {
     #[json_schema(description = "Type library in `project/version/library` format")]
     types: String,
-}
-
-#[derive(Serialize)]
-pub struct VulHuntTypeLoadResult {
-    type_library: String,
-    imported_types: usize,
-    matched_functions: usize,
-}
-
-impl VulHuntTypeLoadResult {
-    pub fn new(
-        type_library: impl Into<String>,
-        imported_types: usize,
-        matched_functions: usize,
-    ) -> Self {
-        Self {
-            type_library: type_library.into(),
-            imported_types,
-            matched_functions,
-        }
-    }
-
-    pub fn type_library(&self) -> &str {
-        &self.type_library
-    }
-
-    pub fn imported_types(&self) -> usize {
-        self.imported_types
-    }
-
-    pub fn matched_functions(&self) -> usize {
-        self.matched_functions
-    }
 }
 
 impl VulHuntLoadTypes {

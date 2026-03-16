@@ -20,12 +20,14 @@ use walkdir::WalkDir;
 pub mod analysis;
 pub mod engine;
 pub mod lua;
+pub mod project;
 
 use self::lua::project::PlatformApi;
 
 pub use self::engine::Engine;
 pub use self::lua::scope::{SignatureEntry, SignatureRange, SignatureVersion};
 pub use self::lua::{Checker, CheckerError};
+pub use self::project::{VulHuntProject, VulHuntProjectError, VulHuntProjectErrorKind};
 
 #[derive(Debug, Clone, Default)]
 pub struct VulHuntModuleDir(Option<PathBuf>);

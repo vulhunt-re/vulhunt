@@ -1,5 +1,5 @@
 [package]
-name = "bias-vulhunt-mcp"
+name = "bias-vulhunt-grpc"
 version = "1.0.0"
 edition = "2024"
 authors = [
@@ -13,7 +13,7 @@ authors = [
   "Claudiu-Vlad Ursache <claudiuv@binarly.io>",
   "Chris McMahon Stone <chris@binarly.io>",
 ]
-description = "VulHunt MCP server"
+description = "VulHunt gRPC server"
 repository = "https://github.com/vulhunt-re/vulhunt"
 license = "GPL-3.0"
 readme = "../README.md"
@@ -23,18 +23,22 @@ default = []
 bndb = ["bias-vulhunt-engine/bndb"]
 
 [dependencies]
-anyhow = "1"
-async-trait = "0.1"
 bias = { version = "1.0", path = "../bias" }
 bias-core = { version = "1.0", path = "../bias-core", features = ["decompiler"] }
 bias-vulhunt-engine = { version = "1.0", path = "../bias-vulhunt-engine" }
-rust-mcp-sdk = { version = "0.8", package = "bias-rust-mcp-sdk" }
-serde = { version = "1", features = ["derive"] }
+prost = "0.14"
+prost-wkt-types = "0.7"
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
+tonic = "0.14"
+tonic-prost = "0.14"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+uuid = { version = "1", features = ["v7"] }
+
+[build-dependencies]
+tonic-prost-build = "0.14"
 
 [lints]
 workspace = true
