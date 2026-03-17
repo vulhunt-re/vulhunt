@@ -41,12 +41,19 @@ impl ServiceResponse<()> {
 
 fn common_args(cmd: Command) -> Command {
     cmd.arg(
-        Arg::new("endpoint")
-            .short('e')
-            .long("endpoint")
-            .env("BIAS_VULHUNT_ENDPOINT")
-            .help("Service endpoint URL (e.g. http://127.0.0.1:50051)")
-            .required(true),
+        Arg::new("host")
+            .long("host")
+            .env("BIAS_VULHUNT_HOST")
+            .help("Host address to connect to")
+            .default_value("127.0.0.1"),
+    )
+    .arg(
+        Arg::new("port")
+            .long("port")
+            .env("BIAS_VULHUNT_PORT")
+            .help("Port to connect to")
+            .default_value("50051")
+            .value_parser(clap::value_parser!(u16)),
     )
 }
 
@@ -136,9 +143,9 @@ fn query_project_command() -> Command {
         Command::new("query-project").about("Run a Lua query against an active session"),
     )
     .arg(
-        Arg::new("script")
-            .long("script")
-            .help("Lua script to execute")
+        Arg::new("query")
+            .long("query")
+            .help("Lua snippet to execute")
             .required(true),
     )
 }
@@ -258,17 +265,21 @@ pub async fn run(opts: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn connect_client(opts: &ArgMatches) -> Result<VulHuntClient, Box<dyn std::error::Error>> {
-    let endpoint = opts.get_one::<String>("endpoint").unwrap();
-    let client = VulHuntClient::new(endpoint.clone()).await?;
+    let host = opts.get_one::<String>("host").unwrap();
+    let port = *opts.get_one::<u16>("port").unwrap();
+    let endpoint = format!("http://{host}:{port}");
+    let client = VulHuntClient::new(endpoint).await?;
     Ok(client)
 }
 
 async fn connect_client_with_session(
     opts: &ArgMatches,
 ) -> Result<VulHuntClient, Box<dyn std::error::Error>> {
-    let endpoint = opts.get_one::<String>("endpoint").unwrap();
+    let host = opts.get_one::<String>("host").unwrap();
+    let port = *opts.get_one::<u16>("port").unwrap();
+    let endpoint = format!("http://{host}:{port}");
     let session_id = opts.get_one::<String>("session-id").unwrap();
-    let client = VulHuntClient::new_with(endpoint.clone(), Some(session_id.clone())).await?;
+    let client = VulHuntClient::new_with(endpoint, session_id.to_owned()).await?;
     Ok(client)
 }
 
@@ -409,9 +420,9 @@ async fn run_list_sessions(opts: &ArgMatches) -> Result<(), Box<dyn std::error::
 
 async fn run_query_project(opts: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect_client_with_session(opts).await?;
-    let script = opts.get_one::<String>("script").unwrap();
+    let query = opts.get_one::<String>("query").unwrap();
 
-    let result = client.query_project(script.as_str()).await?;
+    let result = client.query_project(query.as_str()).await?;
 
     let response = ServiceResponse::ok(result);
 
