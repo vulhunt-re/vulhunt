@@ -28,10 +28,12 @@ pub enum TypeError {
     #[cfg(feature = "import-c")]
     #[error(transparent)]
     Clang(#[from] ClangError),
-    #[error(transparent)]
-    Cache(#[from] bincode::Error),
+    #[error("failed to deserialise type database: {0}; regenerate it using bias-tutil")]
+    Deserialisation(#[from] rmp_serde::decode::Error),
     #[error(transparent)]
     IO(#[from] io::Error),
+    #[error("failed to serialise type database: {0}")]
+    Serialisation(#[from] rmp_serde::encode::Error),
     #[error("build configuration does not support header parsing")]
     Unsupported,
 }
@@ -491,7 +493,7 @@ impl TypeInfoDB {
                 let file = File::open(&cached)?;
                 let reader = BufReader::new(file);
 
-                Ok(bincode::deserialize_from(reader)?)
+                Ok(rmp_serde::decode::from_read(reader)?)
             };
 
             match import() {
@@ -586,9 +588,9 @@ impl TypeInfoDB {
         P: AsRef<Path>,
     {
         let file = File::create(path)?;
-        let writer = BufWriter::new(file);
+        let mut writer = BufWriter::new(file);
 
-        bincode::serialize_into(writer, self)?;
+        rmp_serde::encode::write(&mut writer, self)?;
 
         Ok(())
     }
