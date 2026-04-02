@@ -46,7 +46,7 @@ gazebo = "0.8"
 gimli = "0.28"
 goblin = { version = "0.4", package = "bias-goblin" }
 indexmap = { version = "2.2", features = ["serde"] }
-iset = { version = "0.3", features = ["serde"] }
+iset = { version = "0.3", features = ["serde"], package = "fugue-iset" }
 itertools = "0.12"
 tracing = "0.1"
 lzma-rs = "0.3"
