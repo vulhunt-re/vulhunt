@@ -39,11 +39,11 @@ pub enum LifterBuilderError {
     #[error(transparent)]
     Backend(#[from] fugue::ir::error::Error),
     #[error("failed to deserialise lifter: {0}; regenerate it using bias-lutil")]
-    Deserialisation(#[from] rmp_serde::decode::Error),
+    Deserialisation(bincode::Error),
     #[error(transparent)]
     FileIO(#[from] std::io::Error),
     #[error("failed to serialise lifter: {0}")]
-    Serialisation(#[from] rmp_serde::encode::Error),
+    Serialisation(bincode::Error),
     #[error("unsupported architecture")]
     UnsupportedArch,
     #[error("unsupported architecture calling convention")]
@@ -79,7 +79,8 @@ impl LifterBuilder {
         let translator = if let Ok(cached) = File::open(&cpath) {
             let reader = BufReader::new(cached);
 
-            let mut translator = rmp_serde::from_read::<_, Translator>(reader)?;
+            let mut translator = bincode::deserialize_from::<_, Translator>(reader)
+                .map_err(LifterBuilderError::Deserialisation)?;
 
             if translator.compiler_conventions().is_empty() {
                 tracing::trace!(
@@ -180,7 +181,8 @@ impl LifterBuilder {
             .with_extension("bin");
 
         let mut writer = BufWriter::new(File::create(cached).map_err(LifterBuilderError::from)?);
-        rmp_serde::encode::write(&mut writer, &translator)?;
+        bincode::serialize_into(&mut writer, &translator)
+            .map_err(LifterBuilderError::Serialisation)?;
 
         Ok(())
     }
@@ -221,7 +223,8 @@ impl LifterBuilder {
 
                 let mut writer =
                     BufWriter::new(File::create(&cached).map_err(LifterBuilderError::from)?);
-                rmp_serde::encode::write(&mut writer, &translator)?;
+                bincode::serialize_into(&mut writer, &translator)
+                    .map_err(LifterBuilderError::Serialisation)?;
 
                 processed.insert(cached);
             }
