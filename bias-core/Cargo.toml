@@ -29,7 +29,7 @@ arrayvec = "0.7"
 base32 = "0.5"
 bias-core-derive = { version = "1.0", path = "../bias-core-derive" }
 bias-loader-uefi = "1"
-bincode = "1"
+bincode = { version = "1", package = "fugue-bincode" }
 bitflags = "2"
 clang = { version = "2", features = ["clang_8_0", "runtime"], optional = true }
 compact_str = "0.8.0"
@@ -47,7 +47,7 @@ gazebo = "0.8"
 gimli = "0.28"
 goblin = { version = "0.4", package = "bias-goblin" }
 indexmap = { version = "2.2", features = ["serde"] }
-iset = { version = "0.3", features = ["serde"] }
+iset = { version = "0.3", features = ["serde"], package = "fugue-iset" }
 itertools = "0.12"
 tracing = "0.1"
 lzma-rs = "0.3"

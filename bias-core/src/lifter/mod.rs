@@ -38,12 +38,12 @@ pub enum LifterBuilderError {
     ArchDef(#[from] fugue::arch::ArchDefParseError),
     #[error(transparent)]
     Backend(#[from] fugue::ir::error::Error),
-    #[error("deserialisation failure")]
-    Deserialisation,
+    #[error("failed to deserialise lifter: {0}; regenerate it using bias-lutil")]
+    Deserialisation(bincode::Error),
     #[error(transparent)]
     FileIO(#[from] std::io::Error),
-    #[error("serialisation failure")]
-    Serialisation,
+    #[error("failed to serialise lifter: {0}")]
+    Serialisation(bincode::Error),
     #[error("unsupported architecture")]
     UnsupportedArch,
     #[error("unsupported architecture calling convention")]
@@ -80,7 +80,7 @@ impl LifterBuilder {
             let reader = BufReader::new(cached);
 
             let mut translator = bincode::deserialize_from::<_, Translator>(reader)
-                .map_err(|_| LifterBuilderError::Deserialisation)?;
+                .map_err(LifterBuilderError::Deserialisation)?;
 
             if translator.compiler_conventions().is_empty() {
                 tracing::trace!(
@@ -180,9 +180,9 @@ impl LifterBuilder {
             .with_file_name(format!("{}", builder.language().id()).replace(":", "-"))
             .with_extension("bin");
 
-        let writer = BufWriter::new(File::create(cached).map_err(LifterBuilderError::from)?);
-        bincode::serialize_into(writer, &translator)
-            .map_err(|_| LifterBuilderError::Serialisation)?;
+        let mut writer = BufWriter::new(File::create(cached).map_err(LifterBuilderError::from)?);
+        bincode::serialize_into(&mut writer, &translator)
+            .map_err(LifterBuilderError::Serialisation)?;
 
         Ok(())
     }
@@ -221,10 +221,10 @@ impl LifterBuilder {
                     "creating cached translator"
                 );
 
-                let writer =
+                let mut writer =
                     BufWriter::new(File::create(&cached).map_err(LifterBuilderError::from)?);
-                bincode::serialize_into(writer, &translator)
-                    .map_err(|_| LifterBuilderError::Serialisation)?;
+                bincode::serialize_into(&mut writer, &translator)
+                    .map_err(LifterBuilderError::Serialisation)?;
 
                 processed.insert(cached);
             }
