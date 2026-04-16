@@ -43,9 +43,12 @@ fixedbitset = { version = "0.4", features = ["serde"] }
 flate2 = { version = "1", features = ["zlib-rs"], default-features = false }
 fst = "0.4"
 fuguex-state = "0.2"
+fxhash = "0.2"
 gazebo = "0.8"
 gimli = "0.28"
 goblin = { version = "0.4", package = "bias-goblin" }
+hashbrown = "0.15"
+hashcons-arena = "0.2"
 indexmap = { version = "2.2", features = ["serde"] }
 iset = { version = "0.3", features = ["serde"], package = "fugue-iset" }
 itertools = "0.12"
