@@ -19,7 +19,7 @@ license = "MIT OR Apache-2.0"
 readme = "../README.BIAS.md"
 
 [dependencies]
-astral-tokio-tar = "0.5"
+astral-tokio-tar = "0.6"
 async-compression = { version = "0.4", features = ["gzip", "tokio"] }
 chrono = { version = "0.4", features = ["serde"] }
 hex = "0.4"
