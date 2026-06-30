@@ -30,6 +30,59 @@ use super::{
     DynamicDecompilerContext, DynamicResolver, PlatformApi, PlatformTypeResolver, ProjectHandle,
 };
 
+impl<'a, 'd> ProjectHandle<'a, 'd, EFIModule> {
+    fn has_guid(&self, value: (String, String)) -> Result<bool, Error> {
+        let uuid = Uuid::parse_str(&value.0.replace("-", ""))
+            .map_err(|_| Error::external("invalid GUID format"))?;
+        let name = value.1;
+
+        let guid = Guid::new_with(uuid, name);
+
+        let mut context = MatchContext::new();
+        let _checkpoint = context.begin(&guid);
+        Ok(guid.matches_rule(&mut context, self.project()))
+    }
+
+    fn has_nvram(&self, value: (String, String, String)) -> Result<bool, Error> {
+        let service = value.0;
+        let name = value.1;
+        let uuid = Uuid::parse_str(&value.2.replace("-", ""))
+            .map_err(|_| Error::external("invalid GUID format"))?;
+
+        let nvram = Nvram::new(service, name, uuid);
+
+        let mut context = MatchContext::new();
+        let _checkpoint = context.begin(&nvram);
+        Ok(nvram.matches_rule(&mut context, self.project()))
+    }
+
+    fn has_ppi(&self, value: (String, String, String)) -> Result<bool, Error> {
+        let service = value.0;
+        let name = value.1;
+        let uuid = Uuid::parse_str(&value.2.replace("-", ""))
+            .map_err(|_| Error::external("invalid GUID format"))?;
+
+        let ppi = Ppi::new(service, name, uuid);
+
+        let mut context = MatchContext::new();
+        let _checkpoint = context.begin(&ppi);
+        Ok(ppi.matches_rule(&mut context, self.project()))
+    }
+
+    fn has_protocol(&self, value: (String, String, String)) -> Result<bool, Error> {
+        let service = value.0;
+        let name = value.1;
+        let uuid = Uuid::parse_str(&value.2.replace("-", ""))
+            .map_err(|_| Error::external("invalid GUID format"))?;
+
+        let proto = Protocol::new(service, name, uuid);
+
+        let mut context = MatchContext::new();
+        let _checkpoint = context.begin(&proto);
+        Ok(proto.matches_rule(&mut context, self.project()))
+    }
+}
+
 impl<'a> PlatformApi<'a> for EFIModule {
     fn should_check(
         arch: &[CheckerArch],
@@ -226,67 +279,28 @@ impl<'a> PlatformApi<'a> for EFIModule {
             },
         );
 
-        methods.add_method(
-            "search_guid",
-            |_, this, value: (String, String)| -> Result<bool, Error> {
-                let uuid = Uuid::parse_str(&value.0.replace("-", ""))
-                    .map_err(|_| Error::external("invalid GUID format"))?;
-                let name = value.1;
+        methods.add_method("search_guid", |_, this, value| {
+            tracing::warn!("`search_guid` is deprecated; use `has_guid` instead");
+            this.has_guid(value)
+        });
+        methods.add_method("has_guid", |_, this, value| this.has_guid(value));
 
-                let guid = Guid::new_with(uuid, name);
+        methods.add_method("search_nvram", |_, this, value| {
+            tracing::warn!("`search_nvram` is deprecated; use `has_nvram` instead");
+            this.has_nvram(value)
+        });
+        methods.add_method("has_nvram", |_, this, value| this.has_nvram(value));
 
-                let mut context = MatchContext::new();
-                let _checkpoint = context.begin(&guid);
-                Ok(guid.matches_rule(&mut context, this.project()))
-            },
-        );
+        methods.add_method("search_ppi", |_, this, value| {
+            tracing::warn!("`search_ppi` is deprecated; use `has_ppi` instead");
+            this.has_ppi(value)
+        });
+        methods.add_method("has_ppi", |_, this, value| this.has_ppi(value));
 
-        methods.add_method(
-            "search_nvram",
-            |_, this, value: (String, String, String)| -> Result<bool, Error> {
-                let service = value.0;
-                let name = value.1;
-                let uuid = Uuid::parse_str(&value.2.replace("-", ""))
-                    .map_err(|_| Error::external("invalid GUID format"))?;
-
-                let nvram = Nvram::new(service, name, uuid);
-
-                let mut context = MatchContext::new();
-                let _checkpoint = context.begin(&nvram);
-                Ok(nvram.matches_rule(&mut context, this.project()))
-            },
-        );
-
-        methods.add_method(
-            "search_ppi",
-            |_, this, value: (String, String, String)| -> Result<bool, Error> {
-                let service = value.0;
-                let name = value.1;
-                let uuid = Uuid::parse_str(&value.2.replace("-", ""))
-                    .map_err(|_| Error::external("invalid GUID format"))?;
-
-                let ppi = Ppi::new(service, name, uuid);
-
-                let mut context = MatchContext::new();
-                let _checkpoint = context.begin(&ppi);
-                Ok(ppi.matches_rule(&mut context, this.project()))
-            },
-        );
-
-        methods.add_method(
-            "search_protocol",
-            |_, this, value: (String, String, String)| -> Result<bool, Error> {
-                let service = value.0;
-                let name = value.1;
-                let uuid = Uuid::parse_str(&value.2.replace("-", ""))
-                    .map_err(|_| Error::external("invalid GUID format"))?;
-
-                let proto = Protocol::new(service, name, uuid);
-
-                let mut context = MatchContext::new();
-                let _checkpoint = context.begin(&proto);
-                Ok(proto.matches_rule(&mut context, this.project()))
-            },
-        );
+        methods.add_method("search_protocol", |_, this, value| {
+            tracing::warn!("`search_protocol` is deprecated; use `has_protocol` instead");
+            this.has_protocol(value)
+        });
+        methods.add_method("has_protocol", |_, this, value| this.has_protocol(value));
     }
 }

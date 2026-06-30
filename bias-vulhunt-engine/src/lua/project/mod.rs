@@ -318,6 +318,35 @@ where
 
         decompiler
     }
+
+    fn has_bytes(&self, value: String) -> Result<bool, Error> {
+        let matcher = BMatcher::from_str(&value).map_err(Error::external)?;
+        let mut context = MatchContext::new();
+        let _checkpoint = context.begin(&matcher);
+        Ok(matcher.matches_rule(&mut context, self.project()))
+    }
+
+    fn has_string(&self, value: (String, Variadic<String>)) -> Result<bool, Error> {
+        let result = if let Some(kind) = value.1.first() {
+            let kind = match &**kind {
+                "ascii" => StringData::Ascii,
+                "utf8" => StringData::Utf8,
+                "utf16" | "utf16-le" | "utf16le" => StringData::Utf16Le,
+                "utf16-be" | "utf16be" => StringData::Utf16Be,
+                enc => return Err(Error::external(format!("invalid string encoding `{enc}`"))),
+            };
+            let searcher = WideString::new_with(value.0, kind);
+            let mut context = MatchContext::new();
+            let _checkpoint = context.begin(&searcher);
+            searcher.matches_rule(&mut context, self.project())
+        } else {
+            let searcher = AsciiString::new(value.0);
+            let mut context = MatchContext::new();
+            let _checkpoint = context.begin(&searcher);
+            searcher.matches_rule(&mut context, self.project())
+        };
+        Ok(result)
+    }
 }
 
 impl<'a, 'd, T> UserData for ProjectHandle<'a, 'd, T>
@@ -864,20 +893,49 @@ where
             },
         );
 
+        methods.add_method("search_bytes", |_, this, value| {
+            tracing::warn!("`search_bytes` is deprecated; use `has_bytes` instead");
+            this.has_bytes(value)
+        });
+        methods.add_method("has_bytes", |_, this, value| this.has_bytes(value));
+
+        methods.add_method("search_string", |_, this, value| {
+            tracing::warn!("`search_string` is deprecated; use `has_string` instead");
+            this.has_string(value)
+        });
+        methods.add_method("has_string", |_, this, value| this.has_string(value));
+
         methods.add_method(
-            "search_bytes",
-            |_, this, value: String| -> Result<bool, Error> {
+            "find_bytes",
+            |lua, this, value: String| -> Result<Table, Error> {
+                let table = lua.create_table()?;
+
+                if value.is_empty() {
+                    return Ok(table);
+                }
+
                 let matcher = BMatcher::from_str(&value).map_err(Error::external)?;
-                let mut context = MatchContext::new();
-                let _checkpoint = context.begin(&matcher);
-                Ok(matcher.matches_rule(&mut context, this.project()))
+                let mut index = 1usize;
+                for (_, region) in this.project().memory().regions().iter(..) {
+                    let bytes = region.bytes();
+                    let base = *region.address();
+                    let mut offset = 0usize;
+                    while let Some(found) = matcher.position_from(bytes, offset) {
+                        let addr = base + found;
+                        table.raw_set(index, lua.create_ser_userdata(AddressValue::from(addr))?)?;
+                        index += 1;
+                        offset = found + 1;
+                    }
+                }
+
+                Ok(table)
             },
         );
 
         methods.add_method(
-            "search_string",
-            |_, this, value: (String, Variadic<String>)| -> Result<bool, Error> {
-                let result = if let Some(kind) = value.1.first() {
+            "find_string",
+            |lua, this, value: (String, Variadic<String>)| -> Result<Table, Error> {
+                let needle = if let Some(kind) = value.1.first() {
                     let kind = match &**kind {
                         "ascii" => StringData::Ascii,
                         "utf8" => StringData::Utf8,
@@ -887,17 +945,32 @@ where
                             return Err(Error::external(format!("invalid string encoding `{enc}`")))
                         }
                     };
-                    let searcher = WideString::new_with(value.0, kind);
-                    let mut context = MatchContext::new();
-                    let _checkpoint = context.begin(&searcher);
-                    searcher.matches_rule(&mut context, this.project())
+                    kind.encode(value.0).map_err(Error::external)?
                 } else {
-                    let searcher = AsciiString::new(value.0);
-                    let mut context = MatchContext::new();
-                    let _checkpoint = context.begin(&searcher);
-                    searcher.matches_rule(&mut context, this.project())
+                    value.0.into_bytes()
                 };
-                Ok(result)
+
+                let table = lua.create_table()?;
+
+                if needle.is_empty() {
+                    return Ok(table);
+                }
+
+                let matcher = BMatcher::from(needle);
+                let mut index = 1usize;
+                for (_, region) in this.project().memory().regions().iter(..) {
+                    let bytes = region.bytes();
+                    let base = *region.address();
+                    let mut offset = 0usize;
+                    while let Some(found) = matcher.position_from(bytes, offset) {
+                        let addr = base + found;
+                        table.raw_set(index, lua.create_ser_userdata(AddressValue::from(addr))?)?;
+                        index += 1;
+                        offset = found + 1;
+                    }
+                }
+
+                Ok(table)
             },
         );
 
