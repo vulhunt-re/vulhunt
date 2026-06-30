@@ -454,3 +454,31 @@ impl CallsFromQuery {
         })
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Deserialize)]
+pub struct CallSiteCallOpts {
+    #[serde(flatten)]
+    pub(crate) address: AddressTarget,
+    #[serde(default)]
+    pub(crate) jumps_as_calls: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Deserialize)]
+#[serde(untagged)]
+pub enum CallSiteQuery {
+    #[serde(with = "::serde_with::As::<::serde_with::FromInto::<AddressValue>>")]
+    Address(Address),
+    WithOptions(CallSiteCallOpts),
+}
+
+impl CallSiteQuery {
+    pub fn targets(self) -> (Address, bool) {
+        match self {
+            Self::Address(addr) => (addr, false),
+            Self::WithOptions(CallSiteCallOpts {
+                address,
+                jumps_as_calls,
+            }) => (*address, jumps_as_calls),
+        }
+    }
+}

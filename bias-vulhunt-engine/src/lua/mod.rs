@@ -29,7 +29,8 @@ use mlua::ObjectLike;
 
 pub mod query;
 pub use query::{
-    CallsFromQuery, CallsToQuery, FunctionQuery, FunctionQueryCallOpts, FunctionQueryTarget,
+    CallSiteQuery, CallsFromQuery, CallsToQuery, FunctionQuery, FunctionQueryCallOpts,
+    FunctionQueryTarget,
 };
 
 pub fn new_vm(module_dir: impl Into<VulHuntModuleDir>) -> Result<mlua::Lua, mlua::Error> {
