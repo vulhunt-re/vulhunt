@@ -1198,6 +1198,17 @@ impl<'a> FunctionContext<'a> {
         self.has_call_with(|f| f.address() == addr, with_jumps)
     }
 
+    pub fn has_reference_to(&self, addr: impl Into<Address>) -> bool {
+        let target = addr.into();
+
+        let xref_db = self.project.get_analysis::<XRefDB>();
+        self.f.blocks().iter().any(|(block_id, _)| {
+            xref_db
+                .xrefs_from(*block_id)
+                .any(|xref| xref.target() == target)
+        })
+    }
+
     pub fn calls_with(
         &self,
         f: impl Fn(&'a Function) -> bool,
@@ -1367,6 +1378,10 @@ impl<'a> UserData for FunctionContext<'a> {
             Ok(to
                 .iter()
                 .any(|target| this.has_call_to(target.address(), jumps_as_calls)))
+        });
+
+        methods.add_method("has_reference", |_lua, this, addr: AddressValue| {
+            Ok(this.has_reference_to(addr))
         });
 
         methods.add_method("named", |_lua, this, arg: String| {
