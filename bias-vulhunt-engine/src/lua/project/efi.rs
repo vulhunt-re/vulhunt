@@ -283,9 +283,7 @@ impl<'a> PlatformApi<'a> for EFIModule {
             tracing::warn!("`search_code` is deprecated; use `find_code` instead");
             this.find_code(value)
         });
-        methods.add_method("find_code", |_, this, value: (String, Variadic<String>)| {
-            this.find_code(value)
-        });
+        methods.add_method("find_code", |_, this, value| this.find_code(value));
 
         methods.add_method("search_guid", |_, this, value| {
             tracing::warn!("`search_guid` is deprecated; use `contains_guid` instead");
