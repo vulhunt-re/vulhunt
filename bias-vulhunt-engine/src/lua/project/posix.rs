@@ -12,7 +12,7 @@ use bias::platform::posix::{
 };
 use bias::platform::PlatformAttributes;
 
-use mlua::{UserDataMethods, Variadic};
+use mlua::{Error, UserDataMethods, Variadic};
 
 use crate::lua::api::SearchCodeResult;
 use crate::lua::project::attrs::name::{matches_name, matches_name_with_prefix};
@@ -20,6 +20,15 @@ use crate::lua::scope::CheckScopeProjectData;
 use crate::lua::{CheckerArch, CheckerError};
 
 use super::{DynamicDecompilerContext, DynamicResolver, PlatformApi, ProjectHandle};
+
+impl<'a, 'd> ProjectHandle<'a, 'd, PosixBinary> {
+    fn find_code(
+        &self,
+        value: (String, Variadic<String>),
+    ) -> Result<Option<SearchCodeResult>, Error> {
+        SearchCodeResult::search(self.project(), value.0)
+    }
+}
 
 impl<'a> PlatformApi<'a> for PosixBinary {
     fn should_check(
@@ -245,11 +254,10 @@ impl<'a> PlatformApi<'a> for PosixBinary {
     where
         'a: 'd,
     {
-        methods.add_method(
-            "search_code",
-            |_lua, this, value: (String, Variadic<String>)| {
-                SearchCodeResult::search(this.project(), value.0)
-            },
-        );
+        methods.add_method("search_code", |_, this, value| {
+            tracing::warn!("`search_code` is deprecated; use `find_code` instead");
+            this.find_code(value)
+        });
+        methods.add_method("find_code", |_, this, value| this.find_code(value));
     }
 }
