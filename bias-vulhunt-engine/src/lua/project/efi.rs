@@ -43,9 +43,9 @@ impl<'a, 'd> ProjectHandle<'a, 'd, EFIModule> {
                 _ => return Err(Error::external("invalid location to search")),
             };
 
-            SearchCodeResult::search_with(this.project(), matcher, place)
+            SearchCodeResult::search_with(self.project(), matcher, place)
         } else {
-            SearchCodeResult::search(this.project(), matcher)
+            SearchCodeResult::search(self.project(), matcher)
         }
     }
 
