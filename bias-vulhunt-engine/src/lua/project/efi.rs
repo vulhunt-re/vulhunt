@@ -31,7 +31,25 @@ use super::{
 };
 
 impl<'a, 'd> ProjectHandle<'a, 'd, EFIModule> {
-    fn has_guid(&self, value: (String, String)) -> Result<bool, Error> {
+    fn find_code(
+        &self,
+        value: (String, Variadic<String>),
+    ) -> Result<Option<SearchCodeResult>, Error> {
+        let matcher = value.0;
+        if let Some(loc) = value.1.first() {
+            let place = match &**loc {
+                "sw_smi_handlers" => CodeLocation::SwSmiHandlers,
+                "child_sw_smi_handlers" => CodeLocation::ChildSwSmiHandlers,
+                _ => return Err(Error::external("invalid location to search")),
+            };
+
+            SearchCodeResult::search_with(this.project(), matcher, place)
+        } else {
+            SearchCodeResult::search(this.project(), matcher)
+        }
+    }
+
+    fn contains_guid(&self, value: (String, String)) -> Result<bool, Error> {
         let uuid = Uuid::parse_str(&value.0.replace("-", ""))
             .map_err(|_| Error::external("invalid GUID format"))?;
         let name = value.1;
@@ -43,7 +61,7 @@ impl<'a, 'd> ProjectHandle<'a, 'd, EFIModule> {
         Ok(guid.matches_rule(&mut context, self.project()))
     }
 
-    fn has_nvram(&self, value: (String, String, String)) -> Result<bool, Error> {
+    fn uses_nvram_variable(&self, value: (String, String, String)) -> Result<bool, Error> {
         let service = value.0;
         let name = value.1;
         let uuid = Uuid::parse_str(&value.2.replace("-", ""))
@@ -56,7 +74,7 @@ impl<'a, 'd> ProjectHandle<'a, 'd, EFIModule> {
         Ok(nvram.matches_rule(&mut context, self.project()))
     }
 
-    fn has_ppi(&self, value: (String, String, String)) -> Result<bool, Error> {
+    fn uses_ppi(&self, value: (String, String, String)) -> Result<bool, Error> {
         let service = value.0;
         let name = value.1;
         let uuid = Uuid::parse_str(&value.2.replace("-", ""))
@@ -69,7 +87,7 @@ impl<'a, 'd> ProjectHandle<'a, 'd, EFIModule> {
         Ok(ppi.matches_rule(&mut context, self.project()))
     }
 
-    fn has_protocol(&self, value: (String, String, String)) -> Result<bool, Error> {
+    fn uses_protocol(&self, value: (String, String, String)) -> Result<bool, Error> {
         let service = value.0;
         let name = value.1;
         let uuid = Uuid::parse_str(&value.2.replace("-", ""))
@@ -261,46 +279,38 @@ impl<'a> PlatformApi<'a> for EFIModule {
     where
         'a: 'd,
     {
-        methods.add_method(
-            "search_code",
-            |_lua, this, value: (String, Variadic<String>)| {
-                let matcher = value.0;
-                if let Some(loc) = value.1.first() {
-                    let place = match &**loc {
-                        "sw_smi_handlers" => CodeLocation::SwSmiHandlers,
-                        "child_sw_smi_handlers" => CodeLocation::ChildSwSmiHandlers,
-                        _ => return Err(Error::external("invalid location to search")),
-                    };
-
-                    SearchCodeResult::search_with(this.project(), matcher, place)
-                } else {
-                    SearchCodeResult::search(this.project(), matcher)
-                }
-            },
-        );
+        methods.add_method("search_code", |_, this, value| {
+            tracing::warn!("`search_code` is deprecated; use `find_code` instead");
+            this.find_code(value)
+        });
+        methods.add_method("find_code", |_, this, value: (String, Variadic<String>)| {
+            this.find_code(value)
+        });
 
         methods.add_method("search_guid", |_, this, value| {
-            tracing::warn!("`search_guid` is deprecated; use `has_guid` instead");
-            this.has_guid(value)
+            tracing::warn!("`search_guid` is deprecated; use `contains_guid` instead");
+            this.contains_guid(value)
         });
-        methods.add_method("has_guid", |_, this, value| this.has_guid(value));
+        methods.add_method("contains_guid", |_, this, value| this.contains_guid(value));
 
         methods.add_method("search_nvram", |_, this, value| {
-            tracing::warn!("`search_nvram` is deprecated; use `has_nvram` instead");
-            this.has_nvram(value)
+            tracing::warn!("`search_nvram` is deprecated; use `uses_nvram_variable` instead");
+            this.uses_nvram_variable(value)
         });
-        methods.add_method("has_nvram", |_, this, value| this.has_nvram(value));
+        methods.add_method("uses_nvram_variable", |_, this, value| {
+            this.uses_nvram_variable(value)
+        });
 
         methods.add_method("search_ppi", |_, this, value| {
-            tracing::warn!("`search_ppi` is deprecated; use `has_ppi` instead");
-            this.has_ppi(value)
+            tracing::warn!("`search_ppi` is deprecated; use `uses_ppi` instead");
+            this.uses_ppi(value)
         });
-        methods.add_method("has_ppi", |_, this, value| this.has_ppi(value));
+        methods.add_method("uses_ppi", |_, this, value| this.uses_ppi(value));
 
         methods.add_method("search_protocol", |_, this, value| {
-            tracing::warn!("`search_protocol` is deprecated; use `has_protocol` instead");
-            this.has_protocol(value)
+            tracing::warn!("`search_protocol` is deprecated; use `uses_protocol` instead");
+            this.uses_protocol(value)
         });
-        methods.add_method("has_protocol", |_, this, value| this.has_protocol(value));
+        methods.add_method("uses_protocol", |_, this, value| this.uses_protocol(value));
     }
 }

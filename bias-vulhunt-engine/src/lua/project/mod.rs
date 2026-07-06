@@ -320,14 +320,14 @@ where
         decompiler
     }
 
-    fn has_bytes(&self, value: String) -> Result<bool, Error> {
+    fn contains_bytes(&self, value: String) -> Result<bool, Error> {
         let matcher = BMatcher::from_str(&value).map_err(Error::external)?;
         let mut context = MatchContext::new();
         let _checkpoint = context.begin(&matcher);
         Ok(matcher.matches_rule(&mut context, self.project()))
     }
 
-    fn has_string(&self, value: (String, Variadic<String>)) -> Result<bool, Error> {
+    fn contains_string(&self, value: (String, Variadic<String>)) -> Result<bool, Error> {
         let result = if let Some(kind) = value.1.first() {
             let kind = match &**kind {
                 "ascii" => StringData::Ascii,
@@ -1014,16 +1014,20 @@ where
         );
 
         methods.add_method("search_bytes", |_, this, value| {
-            tracing::warn!("`search_bytes` is deprecated; use `has_bytes` instead");
-            this.has_bytes(value)
+            tracing::warn!("`search_bytes` is deprecated; use `contains_bytes` instead");
+            this.contains_bytes(value)
         });
-        methods.add_method("has_bytes", |_, this, value| this.has_bytes(value));
+        methods.add_method("contains_bytes", |_, this, value| {
+            this.contains_bytes(value)
+        });
 
         methods.add_method("search_string", |_, this, value| {
-            tracing::warn!("`search_string` is deprecated; use `has_string` instead");
-            this.has_string(value)
+            tracing::warn!("`search_string` is deprecated; use `contains_string` instead");
+            this.contains_string(value)
         });
-        methods.add_method("has_string", |_, this, value| this.has_string(value));
+        methods.add_method("contains_string", |_, this, value| {
+            this.contains_string(value)
+        });
 
         methods.add_method(
             "find_bytes",
