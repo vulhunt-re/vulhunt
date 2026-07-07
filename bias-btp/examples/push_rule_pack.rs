@@ -15,25 +15,25 @@ scopes = {scope:project{with = check}}
 local function check(project)
   local x86 = require "uefi/primitives/x86"
 
-  local pattern1 = project:search_code(
+  local pattern1 = project:find_code(
                      "8975..8975..488975..8975..488975..488975..408875..ff10488d45..4c8bcf48894424..448d46..488b05........418bd4488bc8ff10488d45..4c8bcf48894424..448d46..488b05........418bd4488bc8ff10488d45..4c8bcf48894424..448d46..488b05........418bd4488bc8ff10488d45..4c8bcf48894424..448d46..488b05........418bd4488b
 c8ff10817d..........74..48b8................e9")
 
   if pattern1 == nil then
-    pattern1 = project:search_code(
+    pattern1 = project:find_code(
                  "448975..448975..4c8975..448975..4c8975..448875..ff10488d45..4c8bce48894424..458d46..488b05........8bd7488bc8ff10488d45..4c8bce48894424..458d46..488b05........8bd7488bc8ff10488d45..4c8bce48894424..458d46..488b05........8bd7488bc8ff10488d45..4c8bce48894424..458d46..488b05........8bd7488bc8ff10817d....
 ......74..48b8................e9")
   end
 
   if pattern1 == nil then
-    pattern1 = project:search_code(
+    pattern1 = project:find_code(
                  "8975..8975..488975..8975..488975..488975..408875..ff10488d45..4c8bcf48894424..448d46..488b05........418bd5488bc8ff10488d45..4c8bcf48894424..448d46..488b05........418bd5488bc8ff10488d45..4c8bcf48894424..448d46..488b05........418bd5488bc8ff10488d45..4c8bcf48894424..448d46..488b05........418bd5488bc8ff
 10817d..........74..48b8................e9")
   end
 
   if pattern1 == nil then return end
 
-  local pattern2 = project:search_code("8b45..48b9................488908488d45")
+  local pattern2 = project:find_code("8b45..48b9................488908488d45")
 
   if pattern2 == nil then return end
 
