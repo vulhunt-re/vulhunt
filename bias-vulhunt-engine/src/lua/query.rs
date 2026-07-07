@@ -335,7 +335,7 @@ pub struct FunctionQueryCallOpts {
 
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Deserialize)]
 #[serde(untagged)]
-pub enum CallsToQuery {
+pub enum CallsQuery {
     #[serde(with = "::serde_with::As::<::serde_with::FromInto::<AddressValue>>")]
     Address(Address),
     Symbol(String),
@@ -343,7 +343,7 @@ pub enum CallsToQuery {
     WithOptions(FunctionQueryCallOpts),
 }
 
-impl CallsToQuery {
+impl CallsQuery {
     pub fn targets<'a>(
         &self,
         project: &'a Project,
@@ -394,66 +394,9 @@ impl CallsToQuery {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Deserialize)]
-#[serde(untagged)]
-pub enum CallsFromQuery {
-    #[serde(with = "::serde_with::As::<::serde_with::FromInto::<AddressValue>>")]
-    Address(Address),
-    Symbol(String),
-    Fuzzy(FuzzyMatch),
-    WithOptions(FunctionQueryCallOpts),
-}
-
-impl CallsFromQuery {
-    pub fn targets<'a>(
-        &self,
-        project: &'a Project,
-        symbols: impl Into<Option<&'a FunctionSymbolMapping>>,
-    ) -> Result<(Vec<&'a Function>, bool), FunctionQueryError> {
-        self.targets_with(project, symbols, false)
-    }
-
-    pub fn targets_with<'a>(
-        &self,
-        project: &'a Project,
-        symbols: impl Into<Option<&'a FunctionSymbolMapping>>,
-        imp: bool,
-    ) -> Result<(Vec<&'a Function>, bool), FunctionQueryError> {
-        Ok(match &self {
-            Self::Address(addr) => {
-                let target = FunctionQueryTarget::target_by_address(*addr, project)
-                    .map(|f| vec![f])
-                    .unwrap_or_default();
-
-                (target, false)
-            }
-            Self::Symbol(name) => {
-                let targets = if imp {
-                    FunctionQueryTarget::targets_by_symbol(name, project, symbols)
-                } else {
-                    FunctionQueryTarget::target_by_symbol(name, project, symbols)
-                        .map(|f| vec![f])
-                        .unwrap_or_default()
-                };
-
-                (targets, false)
-            }
-            Self::Fuzzy(fuzzy) => (fuzzy.targets(project, symbols)?, false),
-            Self::WithOptions(FunctionQueryCallOpts {
-                target,
-                jumps_as_calls,
-            }) => {
-                let targets = if imp {
-                    target.targets_with(project, symbols, true)?
-                } else {
-                    target.targets(project, symbols)?
-                };
-
-                (targets, *jumps_as_calls)
-            }
-        })
-    }
-}
+// Aliases for more clear API
+pub type CallsToQuery = CallsQuery;
+pub type CallsFromQuery = CallsQuery;
 
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Deserialize)]
 pub struct CallSiteCallOpts {
