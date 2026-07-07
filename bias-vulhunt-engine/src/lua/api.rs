@@ -2258,24 +2258,24 @@ impl<'a> UserData for SyntaxMatchResult<'a> {
     }
 }
 
-pub struct SearchCodeResult {
+pub struct FindCodeResult {
     function_address: Address,
     start_address: Address,
     end_address: Address,
     insns: Vec<Instruction>,
 }
 
-impl SearchCodeResult {
-    pub fn search(project: &Project, pattern: impl AsRef<str>) -> Result<Option<Self>, Error> {
-        Self::search_with(project, pattern, None)
+impl FindCodeResult {
+    pub fn find(project: &Project, pattern: impl AsRef<str>) -> Result<Option<Self>, Error> {
+        Self::find_with(project, pattern, None)
     }
 
-    pub fn search_with(
+    pub fn find_with(
         project: &Project,
         pattern: impl AsRef<str>,
         location: impl Into<Option<CodeLocation>>,
     ) -> Result<Option<Self>, Error> {
-        let searcher = if let Some(location) = location.into() {
+        let finder = if let Some(location) = location.into() {
             Code::from_pattern_with(pattern, location)
         } else {
             Code::from_pattern(pattern)
@@ -2283,8 +2283,8 @@ impl SearchCodeResult {
         .map_err(Error::external)?;
 
         let mut context = MatchContext::new();
-        let checkpoint = context.begin(&searcher);
-        let result = searcher.matches_rule(&mut context, project);
+        let checkpoint = context.begin(&finder);
+        let result = finder.matches_rule(&mut context, project);
         context.commit(checkpoint);
 
         if result {
@@ -2301,7 +2301,7 @@ impl SearchCodeResult {
                         })
                         .ok_or_else(|| Error::external("code outside any function"))?;
 
-                    let bytes = searcher.pattern().len();
+                    let bytes = finder.pattern().len();
 
                     let mut disas = Disassembler::new(project.lifter());
                     let mut insns = Vec::new();
@@ -2334,7 +2334,7 @@ impl SearchCodeResult {
     }
 }
 
-impl UserData for SearchCodeResult {
+impl UserData for FindCodeResult {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("function_address", |lua, this| {
             lua.create_ser_userdata(AddressValue::from(this.function_address))

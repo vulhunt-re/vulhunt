@@ -14,7 +14,7 @@ use bias::platform::PlatformAttributes;
 
 use mlua::{Error, UserDataMethods, Variadic};
 
-use crate::lua::api::SearchCodeResult;
+use crate::lua::api::FindCodeResult;
 use crate::lua::project::attrs::name::{matches_name, matches_name_with_prefix};
 use crate::lua::scope::CheckScopeProjectData;
 use crate::lua::{CheckerArch, CheckerError};
@@ -25,8 +25,8 @@ impl<'a, 'd> ProjectHandle<'a, 'd, PosixBinary> {
     fn find_code(
         &self,
         value: (String, Variadic<String>),
-    ) -> Result<Option<SearchCodeResult>, Error> {
-        SearchCodeResult::search(self.project(), value.0)
+    ) -> Result<Option<FindCodeResult>, Error> {
+        FindCodeResult::find(self.project(), value.0)
     }
 }
 

@@ -21,7 +21,7 @@ use bias::platform::PlatformAttributes;
 
 use mlua::{Error, UserDataMethods, Variadic};
 
-use crate::lua::api::SearchCodeResult;
+use crate::lua::api::FindCodeResult;
 use crate::lua::project::attrs::name::{matches_name, matches_name_with_prefix};
 use crate::lua::scope::CheckScopeProjectData;
 use crate::lua::{CheckerArch, CheckerError};
@@ -34,7 +34,7 @@ impl<'a, 'd> ProjectHandle<'a, 'd, EFIModule> {
     fn find_code(
         &self,
         value: (String, Variadic<String>),
-    ) -> Result<Option<SearchCodeResult>, Error> {
+    ) -> Result<Option<FindCodeResult>, Error> {
         let matcher = value.0;
         if let Some(loc) = value.1.first() {
             let place = match &**loc {
@@ -43,9 +43,9 @@ impl<'a, 'd> ProjectHandle<'a, 'd, EFIModule> {
                 _ => return Err(Error::external("invalid location to search")),
             };
 
-            SearchCodeResult::search_with(self.project(), matcher, place)
+            FindCodeResult::find_with(self.project(), matcher, place)
         } else {
-            SearchCodeResult::search(self.project(), matcher)
+            FindCodeResult::find(self.project(), matcher)
         }
     }
 
