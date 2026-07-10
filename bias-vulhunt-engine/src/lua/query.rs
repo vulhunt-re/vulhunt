@@ -394,7 +394,6 @@ impl CallsQuery {
     }
 }
 
-// Aliases for more clear API
 pub type CallsToQuery = CallsQuery;
 pub type CallsFromQuery = CallsQuery;
 
