@@ -21,7 +21,7 @@ use bias::platform::PlatformAttributes;
 
 use mlua::{Error, UserDataMethods, Variadic};
 
-use crate::lua::api::FindCodeResult;
+use crate::lua::api::SearchCodeResult;
 use crate::lua::project::attrs::name::{matches_name, matches_name_with_prefix};
 use crate::lua::scope::CheckScopeProjectData;
 use crate::lua::{CheckerArch, CheckerError};
@@ -29,77 +29,6 @@ use crate::lua::{CheckerArch, CheckerError};
 use super::{
     DynamicDecompilerContext, DynamicResolver, PlatformApi, PlatformTypeResolver, ProjectHandle,
 };
-
-impl<'a, 'd> ProjectHandle<'a, 'd, EFIModule> {
-    fn find_code(
-        &self,
-        value: (String, Variadic<String>),
-    ) -> Result<Option<FindCodeResult>, Error> {
-        let matcher = value.0;
-        if let Some(loc) = value.1.first() {
-            let place = match &**loc {
-                "sw_smi_handlers" => CodeLocation::SwSmiHandlers,
-                "child_sw_smi_handlers" => CodeLocation::ChildSwSmiHandlers,
-                _ => return Err(Error::external("invalid location to search")),
-            };
-
-            FindCodeResult::find_with(self.project(), matcher, place)
-        } else {
-            FindCodeResult::find(self.project(), matcher)
-        }
-    }
-
-    fn contains_guid(&self, value: (String, String)) -> Result<bool, Error> {
-        let uuid = Uuid::parse_str(&value.0.replace("-", ""))
-            .map_err(|_| Error::external("invalid GUID format"))?;
-        let name = value.1;
-
-        let guid = Guid::new_with(uuid, name);
-
-        let mut context = MatchContext::new();
-        let _checkpoint = context.begin(&guid);
-        Ok(guid.matches_rule(&mut context, self.project()))
-    }
-
-    fn uses_nvram_variable(&self, value: (String, String, String)) -> Result<bool, Error> {
-        let service = value.0;
-        let name = value.1;
-        let uuid = Uuid::parse_str(&value.2.replace("-", ""))
-            .map_err(|_| Error::external("invalid GUID format"))?;
-
-        let nvram = Nvram::new(service, name, uuid);
-
-        let mut context = MatchContext::new();
-        let _checkpoint = context.begin(&nvram);
-        Ok(nvram.matches_rule(&mut context, self.project()))
-    }
-
-    fn uses_ppi(&self, value: (String, String, String)) -> Result<bool, Error> {
-        let service = value.0;
-        let name = value.1;
-        let uuid = Uuid::parse_str(&value.2.replace("-", ""))
-            .map_err(|_| Error::external("invalid GUID format"))?;
-
-        let ppi = Ppi::new(service, name, uuid);
-
-        let mut context = MatchContext::new();
-        let _checkpoint = context.begin(&ppi);
-        Ok(ppi.matches_rule(&mut context, self.project()))
-    }
-
-    fn uses_protocol(&self, value: (String, String, String)) -> Result<bool, Error> {
-        let service = value.0;
-        let name = value.1;
-        let uuid = Uuid::parse_str(&value.2.replace("-", ""))
-            .map_err(|_| Error::external("invalid GUID format"))?;
-
-        let proto = Protocol::new(service, name, uuid);
-
-        let mut context = MatchContext::new();
-        let _checkpoint = context.begin(&proto);
-        Ok(proto.matches_rule(&mut context, self.project()))
-    }
-}
 
 impl<'a> PlatformApi<'a> for EFIModule {
     fn should_check(
@@ -279,36 +208,85 @@ impl<'a> PlatformApi<'a> for EFIModule {
     where
         'a: 'd,
     {
-        methods.add_method("search_code", |_, this, value| {
-            tracing::warn!("`search_code` is deprecated; use `find_code` instead");
-            this.find_code(value)
-        });
-        methods.add_method("find_code", |_, this, value| this.find_code(value));
+        methods.add_method(
+            "search_code",
+            |_lua, this, value: (String, Variadic<String>)| {
+                let matcher = value.0;
+                if let Some(loc) = value.1.first() {
+                    let place = match &**loc {
+                        "sw_smi_handlers" => CodeLocation::SwSmiHandlers,
+                        "child_sw_smi_handlers" => CodeLocation::ChildSwSmiHandlers,
+                        _ => return Err(Error::external("invalid location to search")),
+                    };
 
-        methods.add_method("search_guid", |_, this, value| {
-            tracing::warn!("`search_guid` is deprecated; use `contains_guid` instead");
-            this.contains_guid(value)
-        });
-        methods.add_method("contains_guid", |_, this, value| this.contains_guid(value));
+                    SearchCodeResult::search_with(this.project(), matcher, place)
+                } else {
+                    SearchCodeResult::search(this.project(), matcher)
+                }
+            },
+        );
 
-        methods.add_method("search_nvram", |_, this, value| {
-            tracing::warn!("`search_nvram` is deprecated; use `uses_nvram_variable` instead");
-            this.uses_nvram_variable(value)
-        });
-        methods.add_method("uses_nvram_variable", |_, this, value| {
-            this.uses_nvram_variable(value)
-        });
+        methods.add_method(
+            "search_guid",
+            |_, this, value: (String, String)| -> Result<bool, Error> {
+                let uuid = Uuid::parse_str(&value.0.replace("-", ""))
+                    .map_err(|_| Error::external("invalid GUID format"))?;
+                let name = value.1;
 
-        methods.add_method("search_ppi", |_, this, value| {
-            tracing::warn!("`search_ppi` is deprecated; use `uses_ppi` instead");
-            this.uses_ppi(value)
-        });
-        methods.add_method("uses_ppi", |_, this, value| this.uses_ppi(value));
+                let guid = Guid::new_with(uuid, name);
 
-        methods.add_method("search_protocol", |_, this, value| {
-            tracing::warn!("`search_protocol` is deprecated; use `uses_protocol` instead");
-            this.uses_protocol(value)
-        });
-        methods.add_method("uses_protocol", |_, this, value| this.uses_protocol(value));
+                let mut context = MatchContext::new();
+                let _checkpoint = context.begin(&guid);
+                Ok(guid.matches_rule(&mut context, this.project()))
+            },
+        );
+
+        methods.add_method(
+            "search_nvram",
+            |_, this, value: (String, String, String)| -> Result<bool, Error> {
+                let service = value.0;
+                let name = value.1;
+                let uuid = Uuid::parse_str(&value.2.replace("-", ""))
+                    .map_err(|_| Error::external("invalid GUID format"))?;
+
+                let nvram = Nvram::new(service, name, uuid);
+
+                let mut context = MatchContext::new();
+                let _checkpoint = context.begin(&nvram);
+                Ok(nvram.matches_rule(&mut context, this.project()))
+            },
+        );
+
+        methods.add_method(
+            "search_ppi",
+            |_, this, value: (String, String, String)| -> Result<bool, Error> {
+                let service = value.0;
+                let name = value.1;
+                let uuid = Uuid::parse_str(&value.2.replace("-", ""))
+                    .map_err(|_| Error::external("invalid GUID format"))?;
+
+                let ppi = Ppi::new(service, name, uuid);
+
+                let mut context = MatchContext::new();
+                let _checkpoint = context.begin(&ppi);
+                Ok(ppi.matches_rule(&mut context, this.project()))
+            },
+        );
+
+        methods.add_method(
+            "search_protocol",
+            |_, this, value: (String, String, String)| -> Result<bool, Error> {
+                let service = value.0;
+                let name = value.1;
+                let uuid = Uuid::parse_str(&value.2.replace("-", ""))
+                    .map_err(|_| Error::external("invalid GUID format"))?;
+
+                let proto = Protocol::new(service, name, uuid);
+
+                let mut context = MatchContext::new();
+                let _checkpoint = context.begin(&proto);
+                Ok(proto.matches_rule(&mut context, this.project()))
+            },
+        );
     }
 }
