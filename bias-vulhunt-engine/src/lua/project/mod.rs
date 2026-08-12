@@ -376,7 +376,7 @@ where
             lua.create_sequence_from(instructions)
         });
 
-        methods.add_method("bytes_at", |_lua, this, options: Table| {
+        methods.add_method("bytes_at", |lua, this, options: Table| {
             let address = options.get::<AddressValue>("address").map(Address::from)?;
             let size = options.get::<usize>("size")?;
 
@@ -385,12 +385,11 @@ where
             }
 
             let memory = this.project.memory();
-            if !memory.contains(address) {
-                return Err(Error::runtime(format!("address {address} is not mapped")));
-            }
-            let bytes = memory.view_bytes(address, size).map_err(Error::external)?;
+            let bytes = memory.view_bytes(address, size).map_err(|e| {
+                Error::runtime(format!("cannot read {size:#x} bytes at {address}: {e}"))
+            })?;
 
-            Ok(hex::encode(bytes))
+            lua.create_string(bytes)
         });
 
         methods.add_method("size_of", |_lua, this, (tname,): (String,)| {

@@ -39,6 +39,7 @@ pub fn new_vm(module_dir: impl Into<VulHuntModuleDir>) -> Result<mlua::Lua, mlua
 
     // Load the Rust FFI ctors
     api::AddressValue::register(&context)?;
+    api::Hex::register(&context)?;
     api::PatternMatcher::register(&context)?;
     api::RegexMatcher::register(&context)?;
     types::BitVec::register(&context)?;

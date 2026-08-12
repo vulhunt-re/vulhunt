@@ -2228,7 +2228,10 @@ impl<'a> UserData for SyntaxMatchResult<'a> {
         methods.add_method("binding_of_match", |_lua, this, var: Value| {
             if let Some(var) = var.as_string().and_then(|s| s.to_str().ok()) {
                 return Ok(this.results.get(0).and_then(|instance| {
-                    instance.variables.get(&*var).and_then(|v| v.as_ref().map(ToOwned::to_owned))
+                    instance
+                        .variables
+                        .get(&*var)
+                        .and_then(|v| v.as_ref().map(ToOwned::to_owned))
                 }));
             }
 
@@ -2446,5 +2449,30 @@ impl UserData for RegexMatcher {
                 }
             },
         );
+    }
+}
+
+pub struct Hex;
+
+impl Hex {
+    pub fn register(lua: &Lua) -> Result<(), Error> {
+        let table = lua.create_table()?;
+
+        table.set(
+            "encode",
+            lua.create_function(|_lua, bytes: mlua::String| Ok(hex::encode(&*bytes.as_bytes())))?,
+        )?;
+
+        table.set(
+            "decode",
+            lua.create_function(|lua, text: mlua::String| {
+                let bytes = hex::decode(&*text.as_bytes()).map_err(Error::external)?;
+                lua.create_string(bytes)
+            })?,
+        )?;
+
+        lua.globals().set("hex", table)?;
+
+        Ok(())
     }
 }
