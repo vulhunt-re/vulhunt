@@ -1453,6 +1453,53 @@ impl Instruction {
     pub fn new(insn: InsnText) -> Self {
         Self { text: insn }
     }
+
+    // decode every instruction whose start address lies in `[start, end)`,
+    // and stop once the `limit` instructions have been decoded (when set);
+    // the last instruction may extend past `end` when it overlaps the boundary
+    pub(crate) fn disassemble_range(
+        project: &Project,
+        start: Address,
+        end: Address,
+        limit: Option<usize>,
+    ) -> Result<Vec<Self>, Error> {
+        let mut disassembler = Disassembler::new(project.lifter());
+        let mut instructions = Vec::new();
+        let mut current = start;
+
+        while current < end {
+            if limit.is_some_and(|limit| instructions.len() >= limit) {
+                break;
+            }
+
+            let text = disassembler
+                .disassemble_at(current, project.memory())
+                .map_err(|_| Error::runtime(format!("invalid instruction at {current}")))?;
+            let size = text.length();
+            let next = u64::from(current)
+                .checked_add(size as u64)
+                .map(Address::from)
+                .ok_or_else(|| Error::runtime("instruction range overflow"))?;
+
+            instructions.push(Self::new(text));
+            current = next;
+        }
+
+        Ok(instructions)
+    }
+}
+
+impl Display for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mnemonic = self.text.mnemonic();
+        let operands = self.text.operand_str();
+
+        if operands.is_empty() {
+            f.write_str(&mnemonic)
+        } else {
+            write!(f, "{mnemonic} {operands}")
+        }
+    }
 }
 
 impl UserData for Instruction {
@@ -1500,6 +1547,12 @@ impl UserData for Instruction {
 
             lua.create_sequence_from(tokens)
         });
+    }
+
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("to_string", |_lua, this, ()| Ok(this.to_string()));
+
+        methods.add_meta_method(MetaMethod::ToString, |_lua, this, ()| Ok(this.to_string()));
     }
 }
 
@@ -2175,7 +2228,10 @@ impl<'a> UserData for SyntaxMatchResult<'a> {
         methods.add_method("binding_of_match", |_lua, this, var: Value| {
             if let Some(var) = var.as_string().and_then(|s| s.to_str().ok()) {
                 return Ok(this.results.get(0).and_then(|instance| {
-                    instance.variables.get(&*var).and_then(|v| v.as_ref().map(ToOwned::to_owned))
+                    instance
+                        .variables
+                        .get(&*var)
+                        .and_then(|v| v.as_ref().map(ToOwned::to_owned))
                 }));
             }
 
@@ -2304,28 +2360,14 @@ impl SearchCodeResult {
                         })
                         .ok_or_else(|| Error::external("code outside any function"))?;
 
-                    let bytes = searcher.pattern().len();
+                    let size = searcher.pattern().len();
+                    let last = addr + size;
 
-                    let mut disas = Disassembler::new(project.lifter());
-                    let mut insns = Vec::new();
-
-                    let mut curr = addr;
-                    let last = addr + bytes;
-
-                    while curr < last {
-                        let text = disas
-                            .disassemble_at(curr, project.memory())
-                            .map_err(|_| Error::external("invalid instruction"))?;
-
-                        let size = text.len();
-
-                        insns.push(Instruction::new(text));
-                        curr += size;
-                    }
+                    let insns = Instruction::disassemble_range(project, addr, last, None)?;
 
                     Ok(Self {
                         function_address: faddr,
-                        start_address: curr,
+                        start_address: addr,
                         end_address: last,
                         insns,
                     })
@@ -2407,5 +2449,30 @@ impl UserData for RegexMatcher {
                 }
             },
         );
+    }
+}
+
+pub struct Hex;
+
+impl Hex {
+    pub fn register(lua: &Lua) -> Result<(), Error> {
+        let table = lua.create_table()?;
+
+        table.set(
+            "encode",
+            lua.create_function(|_lua, bytes: mlua::String| Ok(hex::encode(&*bytes.as_bytes())))?,
+        )?;
+
+        table.set(
+            "decode",
+            lua.create_function(|lua, text: mlua::String| {
+                let bytes = hex::decode(&*text.as_bytes()).map_err(Error::external)?;
+                lua.create_string(bytes)
+            })?,
+        )?;
+
+        lua.globals().set("hex", table)?;
+
+        Ok(())
     }
 }

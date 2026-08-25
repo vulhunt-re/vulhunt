@@ -27,6 +27,7 @@ bias-compat-patfind = { version = "1.0", path = "../bias-compat-patfind" }
 bitflags = "2"
 compact_str = "0.7"
 full_moon = { version = "2", default-features = false, features = ["serde", "luajit"] }
+hex = "0.4"
 iset = { version = "0.3", package = "fugue-iset" }
 itertools = "0.13"
 tracing = "0.1"

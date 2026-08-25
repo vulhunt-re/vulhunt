@@ -20,7 +20,7 @@ use crate::lua::types::ir::IRTerm;
 use crate::VulHuntModuleDir;
 
 use super::api::{
-    AddressValue, CallSiteContext, CheckResult, FunctionContext, PatternMatcher, RegexMatcher,
+    AddressValue, CallSiteContext, CheckResult, FunctionContext, Hex, PatternMatcher, RegexMatcher,
     FUNCTIONAL, PRELUDE,
 };
 use super::modules::register_module_loader;
@@ -148,6 +148,7 @@ impl Checker {
 
         // Load the Rust FFI ctors
         AddressValue::register(&context).map_err(CheckerError::Load)?;
+        Hex::register(&context).map_err(CheckerError::Load)?;
         PatternMatcher::register(&context).map_err(CheckerError::Load)?;
         RegexMatcher::register(&context).map_err(CheckerError::Load)?;
         LuaBitVec::register(&context).map_err(CheckerError::Load)?;

@@ -32,7 +32,7 @@ use crate::lua::scope::{AnnotatingPlatformTypeResolver, CheckScopeCallsAnnotatio
 use crate::lua::types::{IRTerm, IRVar};
 use crate::lua::{CallSiteQuery, CallsFromQuery, CallsToQuery, FunctionQuery};
 
-use super::api::{AddressValue, DecompiledFunction};
+use super::api::{AddressValue, DecompiledFunction, Instruction};
 use super::scope::CheckScopeProjectData;
 use super::{CallSiteContext, CheckerArch, CheckerError, FunctionContext};
 
@@ -362,6 +362,36 @@ where
     }
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("disassemble", |lua, this, options: Table| {
+            let start = options.get::<AddressValue>("start").map(Address::from)?;
+            let stop = options.get::<AddressValue>("stop").map(Address::from)?;
+            let limit = options.get::<Option<usize>>("limit")?;
+
+            if start >= stop {
+                return Err(Error::runtime("disassemble requires start < stop"));
+            }
+
+            let instructions = Instruction::disassemble_range(this.project, start, stop, limit)?;
+
+            lua.create_sequence_from(instructions)
+        });
+
+        methods.add_method("bytes_at", |lua, this, options: Table| {
+            let address = options.get::<AddressValue>("address").map(Address::from)?;
+            let size = options.get::<usize>("size")?;
+
+            if size == 0 {
+                return Err(Error::runtime("size must be greater than zero"));
+            }
+
+            let memory = this.project.memory();
+            let bytes = memory.view_bytes(address, size).map_err(|e| {
+                Error::runtime(format!("cannot read {size:#x} bytes at {address}: {e}"))
+            })?;
+
+            lua.create_string(bytes)
+        });
+
         methods.add_method("size_of", |_lua, this, (tname,): (String,)| {
             Ok(this
                 .types
