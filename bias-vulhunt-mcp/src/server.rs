@@ -117,7 +117,7 @@ impl VulHuntServer {
                 name: "vulhunt-mcp-server".to_owned(),
                 title: Some("VulHunt MCP server".to_owned()),
                 version: env!("CARGO_PKG_VERSION").to_owned(),
-                website_url: Some("https://vulhunt.dev".to_owned()),
+                website_url: Some("https://vulhunt.re".to_owned()),
             },
         }
     }
