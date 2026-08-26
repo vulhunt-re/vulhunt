@@ -18,7 +18,12 @@ repository = "https://github.com/vulhunt-re/vulhunt"
 license = "GPL-3.0"
 readme = "../README.md"
 
+[features]
+default = []
+bndb = ["dep:bias-loader-bndb"]
+
 [dependencies]
+bias-loader-bndb = { path = "../bias-loader-bndb", optional = true }
 anyhow = "1"
 bias = { version = "1.0", path = "../bias" }
 bias-core = { version = "1.0", path = "../bias-core", features = ["decompiler"] }

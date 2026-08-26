@@ -24,17 +24,15 @@ use bias_core::prelude::*;
 #[cfg(feature = "bndb")]
 use bias_loader_bndb::BNDBData;
 
-use bias_vulhunt_engine::lua::api::AddressValue;
-use bias_vulhunt_engine::lua::project::PlatformApi;
-use bias_vulhunt_engine::lua::{ProjectHandle, new_vm};
-use bias_vulhunt_engine::{CheckerError, SignatureEntry, flirt_arch_lib_lookup};
-
 use mlua::LuaSerdeExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::tools::{VulHuntSignatureLoadResult, VulHuntTypeLoadResult};
+use crate::lua::api::AddressValue;
+use crate::lua::project::PlatformApi;
+use crate::lua::{ProjectHandle, new_vm};
+use crate::{CheckerError, SignatureEntry, flirt_arch_lib_lookup};
 
 const SUPPORTED_PLATFORMS: &[&str] = &[EFIStandalone::NAME, EFIModule::NAME, PosixBinary::NAME];
 
@@ -313,6 +311,62 @@ pub enum VulHuntLoader {
     BNDB,
 }
 
+#[derive(Serialize)]
+pub struct VulHuntSignatureLoadResult {
+    loaded_files: Vec<String>,
+    matched_functions: usize,
+}
+
+impl VulHuntSignatureLoadResult {
+    pub fn new(loaded_files: Vec<String>, matched_functions: usize) -> Self {
+        Self {
+            loaded_files,
+            matched_functions,
+        }
+    }
+
+    pub fn loaded_files(&self) -> &[String] {
+        &self.loaded_files
+    }
+
+    pub fn matched_functions(&self) -> usize {
+        self.matched_functions
+    }
+}
+
+#[derive(Serialize)]
+pub struct VulHuntTypeLoadResult {
+    type_library: String,
+    imported_types: usize,
+    matched_functions: usize,
+}
+
+impl VulHuntTypeLoadResult {
+    pub fn new(
+        type_library: impl Into<String>,
+        imported_types: usize,
+        matched_functions: usize,
+    ) -> Self {
+        Self {
+            type_library: type_library.into(),
+            imported_types,
+            matched_functions,
+        }
+    }
+
+    pub fn type_library(&self) -> &str {
+        &self.type_library
+    }
+
+    pub fn imported_types(&self) -> usize {
+        self.imported_types
+    }
+
+    pub fn matched_functions(&self) -> usize {
+        self.matched_functions
+    }
+}
+
 pub struct VulHuntProject {
     component: LoadedBinaryComponent<'static>,
     project: Project,
@@ -479,10 +533,10 @@ impl VulHuntProject {
             return Ok(());
         }
 
-        if let Some(known) = Ustr::from_existing(name)
-            && self.symbol_mapping.symbol_mapping().contains_key(&known)
-        {
-            return Err(VulHuntProjectError::duplicate_function_symbol(path, name));
+        if let Some(known) = Ustr::from_existing(name) {
+            if self.symbol_mapping.symbol_mapping().contains_key(&known) {
+                return Err(VulHuntProjectError::duplicate_function_symbol(path, name));
+            }
         }
 
         let f = self.project.functions_mut().get_mut(fid).expect("present");

@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package vulhunt.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+service VulHunt {
+  rpc OpenProject(OpenProjectRequest) returns (OpenProjectResponse);
+  rpc CloseProject(CloseProjectRequest) returns (CloseProjectResponse);
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  rpc QueryProject(QueryProjectRequest) returns (QueryProjectResponse);
+  rpc UpdateFunctionName(UpdateFunctionNameRequest) returns (UpdateFunctionNameResponse);
+  rpc SetFunctionNotes(SetFunctionNotesRequest) returns (SetFunctionNotesResponse);
+  rpc GetFunctionNotes(GetFunctionNotesRequest) returns (GetFunctionNotesResponse);
+  rpc LoadSignatures(LoadSignaturesRequest) returns (LoadSignaturesResponse);
+  rpc LoadTypes(LoadTypesRequest) returns (LoadTypesResponse);
+}
+
+message OpenProjectRequest {
+  string path = 1;
+  google.protobuf.Struct attributes = 2;
+}
+
+message OpenProjectResponse {
+  string session_id = 1;
+}
+
+message CloseProjectRequest {
+  string session_id = 1;
+}
+
+message CloseProjectResponse {}
+
+message ListSessionsRequest {}
+
+message ListSessionsResponse {
+  repeated SessionInfo sessions = 1;
+}
+
+message SessionInfo {
+  string session_id = 1;
+  string path = 2;
+  google.protobuf.Timestamp created_at = 3;
+  google.protobuf.Timestamp last_accessed_at = 4;
+}
+
+message QueryProjectRequest {
+  string session_id = 1;
+  string script = 2;
+}
+
+message QueryProjectResponse {
+  google.protobuf.Value result = 1;
+}
+
+message UpdateFunctionNameRequest {
+  string session_id = 1;
+  string function = 2;
+  string new_name = 3;
+}
+
+message UpdateFunctionNameResponse {}
+
+message SetFunctionNotesRequest {
+  string session_id = 1;
+  string function = 2;
+  string notes = 3;
+}
+
+message SetFunctionNotesResponse {}
+
+message GetFunctionNotesRequest {
+  string session_id = 1;
+  string function = 2;
+}
+
+message GetFunctionNotesResponse {
+  optional string notes = 1;
+}
+
+message SignatureRange {
+  string project = 1;
+  optional string from = 2;
+  optional string to = 3;
+}
+
+message SignatureVersion {
+  string project = 1;
+  string version = 2;
+}
+
+message SignatureEntry {
+  oneof spec {
+    SignatureRange range = 1;
+    SignatureVersion version = 2;
+    string file = 3;
+  }
+}
+
+message LoadSignaturesRequest {
+  string session_id = 1;
+  repeated SignatureEntry signatures = 2;
+}
+
+message LoadSignaturesResponse {
+  repeated string loaded_files = 1;
+  uint64 matched_functions = 2;
+}
+
+message LoadTypesRequest {
+  string session_id = 1;
+  string types = 2;
+}
+
+message LoadTypesResponse {
+  string type_library = 1;
+  uint64 imported_types = 2;
+  uint64 matched_functions = 3;
+}

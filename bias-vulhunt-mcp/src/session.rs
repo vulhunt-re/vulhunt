@@ -21,7 +21,7 @@ use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::VulHuntServerError;
-use crate::project::VulHuntProject;
+use bias_vulhunt_engine::project::VulHuntProject;
 use crate::tools::*;
 
 static INIT_PLATFORM_DATA: Once = Once::new();
