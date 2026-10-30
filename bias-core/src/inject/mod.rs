@@ -127,7 +127,7 @@ impl InjectionManager {
             let mut val = val.into();
             let nbits = var.nbits();
             if nbits != val.nbits() {
-                val.cast_assign(nbits as usize);
+                val.cast_assign(nbits);
             }
             val
         } else {

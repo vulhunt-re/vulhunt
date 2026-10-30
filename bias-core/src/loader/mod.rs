@@ -4,13 +4,13 @@ use std::ops::{Deref, Range};
 use std::path::Path;
 
 use fugue::bytes::{ByteCast, Endian, BE, LE};
-use fugue::ir::Address;
 use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::any::ProvidesStaticType;
 use crate::arch::ContextUpdates;
 use crate::cfg::context::ICFGExtendedContext;
+use crate::ir::Address;
 use crate::kb::function::FunctionInfo;
 use crate::kb::{uuid, Uuid};
 use crate::lifter::Lifter;
@@ -234,9 +234,9 @@ impl<'a> LoaderRegion<'a> {
     pub fn read_value<T: ByteCast>(&self, offset: usize) -> Option<T> {
         let range = self.view_bytes(offset, T::SIZEOF)?;
         Some(if self.endian.is_little() {
-            T::from_bytes::<LE>(range)
+            T::read_bytes::<LE>(range)
         } else {
-            T::from_bytes::<BE>(range)
+            T::read_bytes::<BE>(range)
         })
     }
 
@@ -248,9 +248,9 @@ impl<'a> LoaderRegion<'a> {
         let endian = self.endian;
         let range = self.view_bytes_mut(offset, T::SIZEOF)?;
         Some(if endian.is_little() {
-            f(T::from_bytes::<LE>(range)).into_bytes::<LE>(range)
+            f(T::read_bytes::<LE>(range)).write_bytes::<LE>(range)
         } else {
-            f(T::from_bytes::<BE>(range)).into_bytes::<BE>(range)
+            f(T::read_bytes::<BE>(range)).write_bytes::<BE>(range)
         })
     }
 
@@ -258,9 +258,9 @@ impl<'a> LoaderRegion<'a> {
         let endian = self.endian;
         let range = self.view_bytes_mut(offset, T::SIZEOF)?;
         Some(if endian.is_little() {
-            value.into_bytes::<LE>(range)
+            value.write_bytes::<LE>(range)
         } else {
-            value.into_bytes::<BE>(range)
+            value.write_bytes::<BE>(range)
         })
     }
 

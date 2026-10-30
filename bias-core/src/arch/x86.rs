@@ -1,11 +1,12 @@
-use fugue::fspec::pattern::{PatternSet, PatternSetMatchIter};
-use fugue::ir::disassembly::ContextDatabase;
-use fugue::ir::{Address, Translator};
+use fugue::lifter::runtime::language::Language;
+use fugue::lifter::runtime::pcode::LiftingContext;
+use fugue::specs::pattern::PatternMatchIter;
+use fugue::specs::PatternSpecs;
 
-use super::{AddressRangeSet, Arch, ErasedArch, Flag, FunctionThunkTemplate};
-use crate::ir::{Expr, Term, Var};
+use super::{register_var, AddressRangeSet, Arch, ErasedArch, Flag, FunctionThunkTemplate};
+use crate::ir::{Address, Expr, Term, Var};
 use crate::kb::{uuid, Lazy, Uuid};
-use crate::lifter::{Lifter, TranslatorExt};
+use crate::lifter::Lifter;
 use crate::region::Region;
 
 #[derive(Copy, Clone, Default)]
@@ -15,9 +16,8 @@ pub struct X86(Uuid);
 pub const ARCH_X86: Uuid = uuid("41CCF45D-CF79-4C02-8BFB-230DC29FA926");
 pub const ARCH_X86_64: Uuid = uuid("9CD0AB9F-1FEE-4F47-8352-BC234ED571F2");
 
-static X86_64_PAT: Lazy<PatternSet> = Lazy::new(|| {
-    PatternSet::from_str(include_str!("patterns/x86/x86-64.yaml"))
-        .expect("valid pattern definition")
+static X86_64_PAT: Lazy<PatternSpecs> = Lazy::new(|| {
+    PatternSpecs::parse(include_str!("patterns/x86/x86-64.yaml")).expect("valid pattern definition")
 });
 
 // NOTE: we should likely allow this stucture to be built based on different
@@ -28,44 +28,44 @@ impl Arch for X86 {
         self.0
     }
 
-    fn flags(&self, translator: &Translator) -> Vec<Flag> {
+    fn flags(&self, language: &'static Language) -> Vec<Flag> {
         || -> Option<Vec<Flag>> {
             Some(vec![
-                Flag::c(translator.register_var("CF")?),
-                Flag::p(translator.register_var("PF")?),
-                Flag::a(translator.register_var("AF")?),
-                Flag::z(translator.register_var("ZF")?),
-                Flag::n(translator.register_var("SF")?),
-                Flag::new(translator.register_var("DF")?),
-                Flag::v(translator.register_var("OF")?),
+                Flag::c(register_var(language, "CF")?),
+                Flag::p(register_var(language, "PF")?),
+                Flag::a(register_var(language, "AF")?),
+                Flag::z(register_var(language, "ZF")?),
+                Flag::n(register_var(language, "SF")?),
+                Flag::new(register_var(language, "DF")?),
+                Flag::v(register_var(language, "OF")?),
             ])
         }()
         .unwrap_or_default()
     }
 
-    fn gprs(&self, translator: &Translator) -> Vec<Var> {
+    fn gprs(&self, language: &'static Language) -> Vec<Var> {
         || -> Option<Vec<Var>> {
             let is_64 = self.is_64();
             let mut pfx = vec![
-                translator.register_var(if is_64 { "RAX" } else { "EAX" })?,
-                translator.register_var(if is_64 { "RBX" } else { "EBX" })?,
-                translator.register_var(if is_64 { "RCX" } else { "ECX" })?,
-                translator.register_var(if is_64 { "RDX" } else { "EDX" })?,
-                translator.register_var(if is_64 { "RSI" } else { "ESI" })?,
-                translator.register_var(if is_64 { "RDI" } else { "EDI" })?,
-                translator.register_var(if is_64 { "RBP" } else { "EBP" })?,
-                translator.register_var(if is_64 { "RSP" } else { "ESP" })?,
+                register_var(language, if is_64 { "RAX" } else { "EAX" })?,
+                register_var(language, if is_64 { "RBX" } else { "EBX" })?,
+                register_var(language, if is_64 { "RCX" } else { "ECX" })?,
+                register_var(language, if is_64 { "RDX" } else { "EDX" })?,
+                register_var(language, if is_64 { "RSI" } else { "ESI" })?,
+                register_var(language, if is_64 { "RDI" } else { "EDI" })?,
+                register_var(language, if is_64 { "RBP" } else { "EBP" })?,
+                register_var(language, if is_64 { "RSP" } else { "ESP" })?,
             ];
 
             if is_64 {
-                pfx.push(translator.register_var("R8")?);
-                pfx.push(translator.register_var("R9")?);
-                pfx.push(translator.register_var("R10")?);
-                pfx.push(translator.register_var("R11")?);
-                pfx.push(translator.register_var("R12")?);
-                pfx.push(translator.register_var("R13")?);
-                pfx.push(translator.register_var("R14")?);
-                pfx.push(translator.register_var("R15")?);
+                pfx.push(register_var(language, "R8")?);
+                pfx.push(register_var(language, "R9")?);
+                pfx.push(register_var(language, "R10")?);
+                pfx.push(register_var(language, "R11")?);
+                pfx.push(register_var(language, "R12")?);
+                pfx.push(register_var(language, "R13")?);
+                pfx.push(register_var(language, "R14")?);
+                pfx.push(register_var(language, "R15")?);
             }
 
             Some(pfx)
@@ -73,8 +73,8 @@ impl Arch for X86 {
         .unwrap_or_default()
     }
 
-    fn frame_pointer(&self, translator: &Translator) -> Option<Var> {
-        translator.register_var(if self.is_64() { "RBP" } else { "EBP" })
+    fn frame_pointer(&self, language: &'static Language) -> Option<Var> {
+        register_var(language, if self.is_64() { "RBP" } else { "EBP" })
     }
 
     fn is_nonsense_pattern(&self, bytes: &[u8]) -> bool {
@@ -109,7 +109,7 @@ impl Arch for X86 {
         }
     }
 
-    fn external_thunk_template(&self, _translator: &Translator) -> FunctionThunkTemplate {
+    fn external_thunk_template(&self, _language: &'static Language) -> FunctionThunkTemplate {
         // RET
         FunctionThunkTemplate::new([0xC3])
     }
@@ -124,7 +124,7 @@ impl Arch for X86 {
         &self,
         _lifter: &Lifter,
         bytes: &'a [u8],
-    ) -> Option<PatternSetMatchIter<'a>> {
+    ) -> Option<PatternMatchIter<'a>> {
         if self.is_64() {
             Some(X86_64_PAT.matches(bytes))
         } else {
@@ -135,7 +135,7 @@ impl Arch for X86 {
     fn for_each_function_by_pattern<F>(
         &self,
         lifter: &Lifter,
-        _ctx: &mut ContextDatabase,
+        _ctx: &mut LiftingContext,
         segment: &Region,
         mut f: F,
     ) where
@@ -145,7 +145,7 @@ impl Arch for X86 {
         if let Some(matches) =
             <Self as Arch>::function_start_patterns(self, &lifter, segment.bytes())
         {
-            for (range, _context) in matches {
+            for (range, _context, _confidence) in matches {
                 let addr = *segment.address() + range.start;
                 f(addr);
             }

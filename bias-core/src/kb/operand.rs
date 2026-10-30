@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use fugue::ir::convention::PrototypeOperand;
+use fugue::lifter::runtime::convention::PrototypeOperand;
 
 use crate::cio::TypeDB;
 use crate::ir::{Address, BitSize, Term, Type, Var};
@@ -108,37 +108,34 @@ impl<'a> OperandBuilder<'a> {
         }
     }
 
-    pub fn from_prototype(&self, operand: &PrototypeOperand) -> (Operand, Option<Operand>) {
+    pub fn from_prototype(&self, operand: &PrototypeOperand) -> Option<(Operand, Option<Operand>)> {
         match operand {
-            PrototypeOperand::Register { varnode, .. } => {
+            PrototypeOperand::Register(varnode) => {
                 let reg = Operand::register(Var::new0(
-                    self.lifter.register_space(),
+                    self.lifter.register_space_id(),
                     varnode.offset(),
                     varnode.size() as u32 * 8,
                 ));
-                (reg, None)
+                Some((reg, None))
             }
-            PrototypeOperand::StackRelative(offset) => {
+            PrototypeOperand::StackRelative { offset, .. } => {
                 let stk = Operand::stack(*offset as i64, self.lifter.address_bytes());
-                (stk, None)
+                Some((stk, None))
             }
-            PrototypeOperand::RegisterJoin {
-                first_varnode,
-                second_varnode,
-                ..
-            } => {
+            PrototypeOperand::RegisterJoin(first_varnode, second_varnode) => {
                 let reg1 = Operand::register(Var::new0(
-                    self.lifter.register_space(),
+                    self.lifter.register_space_id(),
                     first_varnode.offset(),
                     first_varnode.size() as u32 * 8,
                 ));
                 let reg2 = Operand::register(Var::new0(
-                    self.lifter.register_space(),
+                    self.lifter.register_space_id(),
                     second_varnode.offset(),
                     second_varnode.size() as u32 * 8,
                 ));
-                (reg1, Some(reg2))
+                Some((reg1, Some(reg2)))
             }
+            PrototypeOperand::Address { .. } | PrototypeOperand::Join { .. } => None,
         }
     }
 }

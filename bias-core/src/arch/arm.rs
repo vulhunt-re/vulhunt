@@ -1,6 +1,7 @@
-use fugue::fspec::pattern::{PatternSet, PatternSetMatchIter};
-use fugue::ir::disassembly::context::ContextDatabase;
-use fugue::ir::{Address, Translator};
+use fugue::lifter::runtime::language::Language;
+use fugue::lifter::runtime::pcode::LiftingContext;
+use fugue::specs::pattern::PatternMatchIter;
+use fugue::specs::PatternSpecs;
 use goblin::elf::Elf;
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::EdgeReference;
@@ -8,15 +9,16 @@ use petgraph::visit::EdgeRef;
 use regex::RegexSet;
 
 use super::{
-    AddressRangeSet, Arch, ContextBitRange, ContextUpdates, ErasedArch, FunctionThunkTemplate,
+    register_var, AddressRangeSet, Arch, ContextBitRange, ContextUpdates, ErasedArch,
+    FunctionThunkTemplate,
 };
 use crate::cfg::block::BlockInfoTable;
 use crate::cfg::function::FunctionStarts;
 use crate::cfg::{FlowKind, ICFG};
-use crate::ir::{Expr, Term, Var};
+use crate::ir::{Address, Expr, Term, Var};
 use crate::kb::function::Function;
 use crate::kb::{uuid, Lazy, Uuid};
-use crate::lifter::{Lifter, TranslatorExt};
+use crate::lifter::Lifter;
 use crate::region::Region;
 
 #[derive(Copy, Clone, Default)]
@@ -27,9 +29,10 @@ pub const ARCH_ARM: Uuid = uuid("303CDBAE-6878-437F-B926-6661D1FAA53E");
 pub const TMODE_CONTEXT: ContextBitRange = ContextBitRange::new(0, 0);
 pub const LRSET_CONTEXT: ContextBitRange = ContextBitRange::new(1, 1);
 
-static ARM_LE_PAT: Lazy<PatternSet> = Lazy::new(|| {
-    PatternSet::from_str(include_str!("patterns/arm/ARM-LE.yaml"))
-        .expect("valid pattern definition")
+const EF_ARM_BE8: u32 = 0x0080_0000;
+
+static ARM_LE_PAT: Lazy<PatternSpecs> = Lazy::new(|| {
+    PatternSpecs::parse(include_str!("patterns/arm/ARM-LE.yaml")).expect("valid pattern definition")
 });
 
 static ARM_MAPPING_PATTERNS: Lazy<RegexSet> =
@@ -54,25 +57,25 @@ impl Arch for ARM {
         name == "halt"
     }
 
-    fn gprs(&self, translator: &Translator) -> Vec<Var> {
+    fn gprs(&self, language: &'static Language) -> Vec<Var> {
         || -> Option<Vec<Var>> {
             Some(vec![
-                translator.register_var("r0")?,
-                translator.register_var("r1")?,
-                translator.register_var("r2")?,
-                translator.register_var("r3")?,
-                translator.register_var("r4")?,
-                translator.register_var("r5")?,
-                translator.register_var("r6")?,
-                translator.register_var("r7")?,
-                translator.register_var("r8")?,
-                translator.register_var("r9")?,
-                translator.register_var("r10")?,
-                translator.register_var("r11")?,
-                translator.register_var("r12")?,
-                translator.register_var("sp")?,
-                translator.register_var("lr")?,
-                translator.register_var("pc")?,
+                register_var(language, "r0")?,
+                register_var(language, "r1")?,
+                register_var(language, "r2")?,
+                register_var(language, "r3")?,
+                register_var(language, "r4")?,
+                register_var(language, "r5")?,
+                register_var(language, "r6")?,
+                register_var(language, "r7")?,
+                register_var(language, "r8")?,
+                register_var(language, "r9")?,
+                register_var(language, "r10")?,
+                register_var(language, "r11")?,
+                register_var(language, "r12")?,
+                register_var(language, "sp")?,
+                register_var(language, "lr")?,
+                register_var(language, "pc")?,
             ])
         }()
         .unwrap_or_default()
@@ -190,21 +193,19 @@ impl Arch for ARM {
         })
     }
 
-    fn external_thunk_template(&self, translator: &Translator) -> FunctionThunkTemplate {
-        let arch = translator.architecture();
-        let endian = arch.endian();
-        let thumb = arch.variant().ends_with("T");
+    fn external_thunk_template(&self, language: &'static Language) -> FunctionThunkTemplate {
+        let thumb = language.variant().ends_with("T");
 
         // BX LR
         if thumb {
             let mut bytes = [0x70, 0x47];
-            if endian.is_big() {
+            if language.insn_endian().is_big() {
                 bytes.reverse();
             }
             FunctionThunkTemplate::new_with(bytes, ContextUpdates::single(TMODE_CONTEXT, 1))
         } else {
             let mut bytes = [0x1E, 0xFF, 0x2F, 0xE1];
-            if endian.is_big() {
+            if language.insn_endian().is_big() {
                 bytes.reverse();
             }
             FunctionThunkTemplate::new_with(bytes, ContextUpdates::single(TMODE_CONTEXT, 0))
@@ -215,13 +216,15 @@ impl Arch for ARM {
         &self,
         func: &mut Function,
         lifter: &Lifter,
-        ctxt: &ContextDatabase,
+        ctxt: &LiftingContext,
         _icfg: &ICFG,
     ) {
         tracing::trace!("checking TMode at {}", func.address());
 
-        let addr = lifter.translator().address(func.address().offset());
-        let tmode = ctxt.get_variable_by_bits(&TMODE_CONTEXT, addr);
+        let addr = lifter
+            .language()
+            .wrap_offset_in_default_space(func.address().offset());
+        let tmode = ctxt.get_variable_by_bits(TMODE_CONTEXT, addr);
 
         tracing::trace!("TMode at {} = {}", func.address(), tmode);
 
@@ -239,10 +242,12 @@ impl Arch for ARM {
         &self,
         address: Address,
         lifter: &Lifter,
-        ctx: &ContextDatabase,
+        ctx: &LiftingContext,
     ) -> Option<(Address, usize)> {
-        let addr_val = lifter.translator().address(address.into());
-        let alignment = match ctx.get_variable_by_bits(&TMODE_CONTEXT, addr_val) {
+        let addr_val = lifter
+            .language()
+            .wrap_offset_in_default_space(address.offset());
+        let alignment = match ctx.get_variable_by_bits(TMODE_CONTEXT, addr_val) {
             1 => 2,
             _ => 4,
         };
@@ -256,8 +261,8 @@ impl Arch for ARM {
         &self,
         lifter: &Lifter,
         bytes: &'a [u8],
-    ) -> Option<PatternSetMatchIter<'a>> {
-        if lifter.endian().is_little() {
+    ) -> Option<PatternMatchIter<'a>> {
+        if lifter.language().insn_endian().is_little() {
             Some(ARM_LE_PAT.matches(bytes))
         } else {
             None
@@ -267,7 +272,7 @@ impl Arch for ARM {
     fn for_each_function_by_pattern<F>(
         &self,
         lifter: &Lifter,
-        ctx: &mut ContextDatabase,
+        ctx: &mut LiftingContext,
         segment: &Region,
         mut f: F,
     ) where
@@ -281,14 +286,16 @@ impl Arch for ARM {
         if let Some(matches) =
             <Self as Arch>::function_start_patterns(self, &lifter, segment.bytes())
         {
-            for (range, context) in matches {
+            for (range, context, _confidence) in matches {
                 let addr = *segment.address() + range.start;
                 // discard if not aligned
                 if addr.offset() % alignment != 0 {
                     continue;
                 }
 
-                let addr_and_space = lifter.translator().address(addr.offset());
+                let addr_and_space = lifter
+                    .language()
+                    .wrap_offset_in_default_space(addr.offset());
 
                 for (name, value) in context.variables() {
                     if name != "TMode" {
@@ -310,7 +317,7 @@ impl Arch for ARM {
 
                     // XXX: do we need to set the whole region?
                     // ctx.set_variable_region_by_bits(&TMODE_CONTEXT, addr_and_space, None, value);
-                    ctx.set_variable_by_bits(&TMODE_CONTEXT, addr_and_space, value);
+                    ctx.set_variable_by_bits(TMODE_CONTEXT, addr_and_space, value);
                 }
 
                 f(addr);
@@ -331,10 +338,12 @@ impl Arch for ARM {
         ctx.set_variable_default_by_bits(&LRSET_CONTEXT, 0);
         */
 
-        let addr = lifter.address_value(*segment.address());
+        let addr = lifter
+            .language()
+            .wrap_offset_in_default_space(segment.address().offset());
 
-        ctx.set_variable_by_bits(&TMODE_CONTEXT, addr, tmode as u32);
-        ctx.set_variable_by_bits(&LRSET_CONTEXT, addr, 0);
+        ctx.set_variable_by_bits(TMODE_CONTEXT, addr, tmode as u32);
+        ctx.set_variable_by_bits(LRSET_CONTEXT, addr, 0);
     }
 
     fn is_mapping_symbol(&self, symbol: &str) -> bool {
@@ -348,6 +357,19 @@ impl ARM {
     }
 
     pub fn check_variant(elf: &Elf, bytes: &[u8]) -> &'static str {
+        let variant = Self::check_isa_variant(elf, bytes);
+        if !elf.little_endian && elf.header.e_flags & EF_ARM_BE8 != 0 {
+            if variant == "v8T" {
+                "v8LEInstruction"
+            } else {
+                "v7LEInstruction"
+            }
+        } else {
+            variant
+        }
+    }
+
+    fn check_isa_variant(elf: &Elf, bytes: &[u8]) -> &'static str {
         // parse .ARM.attributes
         let Some(arm_attributes_section) = elf.section_headers.iter().find(|&section| {
             elf.shdr_strtab

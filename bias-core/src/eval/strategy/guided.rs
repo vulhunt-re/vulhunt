@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use fugue::ir::Address;
+use crate::ir::Address;
 
 use super::{PredicatedLocation, Strategy};
 

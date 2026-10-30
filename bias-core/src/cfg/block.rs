@@ -2,7 +2,6 @@ use std::borrow::Borrow;
 use std::cell::Cell;
 
 use ahash::AHashMap;
-use fugue::ir::Address;
 use petgraph::graph::NodeIndex;
 use smallvec::SmallVec;
 
@@ -10,6 +9,7 @@ use super::flow::FlowInfo;
 use super::icfg::ICFG;
 use super::insn::{InsnInfo, InsnInfoTable};
 use crate::cfg::flow::FlowKind;
+use crate::ir::Address;
 use crate::kb::block::CodeBlockId;
 use crate::kb::function::FunctionId;
 use crate::kb::id::Identifiable;

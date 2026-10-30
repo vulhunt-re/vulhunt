@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 
 use ahash::AHashMap;
-use fugue::ir::Address;
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
@@ -14,6 +13,7 @@ use crate::cio::TypeDB;
 use crate::data::DataTypeDB;
 use crate::eval::{Configuration as EvalConfiguration, EvalError, IREvaluator};
 use crate::inject::InjectionManager;
+use crate::ir::Address;
 use crate::kb::block::{CodeBlockId, CodeBlockTable};
 use crate::kb::function::FunctionTable;
 use crate::kb::function_summary::FunctionSummaryTable;

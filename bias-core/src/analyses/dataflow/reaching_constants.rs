@@ -46,9 +46,7 @@ impl<'a, 'ir> Visit<'ir> for GenKillBuilder<'a> {
         }
 
         let avar = self.aliases.parent(var).unwrap_or(*var);
-        let value = expr
-            .constant()
-            .map(|cst| cst.unsigned_cast(avar.nbits() as usize));
+        let value = expr.constant().map(|cst| cst.unsigned_cast(avar.nbits()));
 
         self.gen_sets.insert(avar, value);
     }
@@ -205,7 +203,7 @@ impl ReachingConstsVisitor {
                 let avar = aliases.parent(&reg).unwrap_or(reg);
                 let value = (reg != avar)
                     .then(|| {
-                        let mut val = val.unsigned_cast(avar.nbits() as _);
+                        let mut val = val.unsigned_cast(avar.nbits());
                         let voff = (reg.offset() - avar.offset()) as u32 * 8;
                         if voff != 0 {
                             val <<= voff;

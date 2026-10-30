@@ -7,10 +7,8 @@ use std::ops::{Deref, DerefMut};
 
 use ahash::{AHashMap, AHashSet};
 use fixedbitset::FixedBitSet;
-use fugue::fspec::FunctionSpecs;
-use fugue::ir::disassembly::{ContextDatabase, IRBuilderArena, ParserContext};
-use fugue::ir::error::Error as IRError;
-use fugue::ir::Address;
+use fugue::lifter::runtime::pcode::{LiftingContext, PCodeOp};
+use fugue::specs::FunctionSpecs;
 use iset::IntervalSet;
 use itertools::Itertools;
 use petgraph::graph::NodeIndex;
@@ -33,7 +31,7 @@ use crate::data::{DataTypeDB, PointerProvenance};
 use crate::eval::{EvalError, IREvalConfig, IREvaluator};
 use crate::inject::InjectionManager;
 use crate::ir::stmt::StmtCache;
-use crate::ir::InsnTarget;
+use crate::ir::{Address, InsnTarget};
 use crate::kb::block::{CodeBlock, CodeBlockId, CodeBlockTable};
 use crate::kb::function::{
     Function, FunctionEntryStrategy, FunctionId, FunctionInfo, FunctionTable,
@@ -42,7 +40,7 @@ use crate::kb::function_summary::FunctionSummaryTable;
 use crate::kb::id::{Identifiable, MKey};
 use crate::kb::table::MPointTable;
 use crate::kb::xref::XRef;
-use crate::lifter::Lifter;
+use crate::lifter::{Lifter, LifterError};
 use crate::loader::LoadedBinary;
 use crate::project::analysis::AnalysisManager;
 use crate::project::ProjectContext;
@@ -474,7 +472,6 @@ pub struct Configuration<'a> {
     pub mark_xrefs_table_limit: usize,
     pub propagate_invalidity: bool,
     pub avoid_invalid_or_nonsense_ranges: bool,
-    pub ir_allocator_reset_period: usize,
 }
 
 impl<'a> AsRef<Configuration<'a>> for Configuration<'a> {
@@ -501,7 +498,6 @@ impl<'a> Default for Configuration<'a> {
             mark_xrefs_table_limit: 512,
             propagate_invalidity: true,
             avoid_invalid_or_nonsense_ranges: true,
-            ir_allocator_reset_period: 100_000,
         }
     }
 }
@@ -613,7 +609,7 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
 
         let itable = mem::take(&mut project.itable).into();
 
-        let mut ctx = project.lifter().context();
+        let mut ctx = project.lifter().lifting_context();
         let mut builder = ICFGBuilder {
             context: ICFGBuilderContext {
                 lifter: &project.lifter,
@@ -651,10 +647,9 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
     }
 
     #[inline(always)]
-    fn update<'az>(
-        irb: &'az IRBuilderArena,
-        ctx: &mut ContextDatabase,
-        pctx: &mut ParserContext<'a, 'az>,
+    fn update(
+        ctx: &mut LiftingContext,
+        operations: &mut Vec<PCodeOp>,
         cache: &mut StmtCache,
         cfg: &mut Self,
         wl: &mut VecDeque<Address>,
@@ -664,11 +659,11 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
         current_region: &Region,
         view: &[u8],
         avoids: &AddressRangeSet,
-    ) -> Result<(FallKind, Address, usize), IRError> {
+    ) -> Result<(FallKind, Address, usize), LifterError> {
         let res = {
-            || -> Result<(FallKind, Address, usize, InsnInfo), IRError> {
+            || -> Result<(FallKind, Address, usize, InsnInfo), LifterError> {
                 let ilink =
-                    InsnInfo::new(cfg.context.lifter, irb, ctx, pctx, cache, *address, view)?;
+                    InsnInfo::new(cfg.context.lifter, ctx, operations, cache, *address, view)?;
 
                 // add unvisited destinations
                 ilink.with_target_addresses(|addr, is_call| {
@@ -738,7 +733,7 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
                                 // try to process derived references if xref is to a table
                                 if let Some(r) = cfg.context.memory.find_region(&xref.target()) {
                                     let mut position = xref.target();
-                                    let shift = cfg.context.lifter.global_space().address_size();
+                                    let shift = cfg.context.lifter.language().address_size();
                                     let bits = shift as u32 * 8;
 
                                     while let Ok(p) = r.read_pointer(position, bits) {
@@ -782,12 +777,12 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
         }
     }
 
-    fn explore<T>(&mut self, binary: &T, ctx: &mut ContextDatabase, segments: VecDeque<&Region>)
+    fn explore<T>(&mut self, binary: &T, ctx: &mut LiftingContext, segments: VecDeque<&Region>)
     where
         T: LoadedBinary + ?Sized,
     {
         let mut wl = VecDeque::new();
-        let mut irb = self.context.lifter.irb(4096);
+        let mut operations = Vec::new();
         let mut bounds = IntervalSet::new();
         let mut pending = IntervalSet::new();
         let mut cache = StmtCache::default();
@@ -862,118 +857,104 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
                 binary.for_each_function(|fcn| {
                     if segment.contains(fcn.entry) {
                         wl.push_back(fcn.entry);
-                        fcn.context
-                            .apply(self.context.lifter.address_value(fcn.entry), ctx);
+                        let entry = self
+                            .context
+                            .lifter
+                            .language()
+                            .wrap_offset_in_default_space(fcn.entry.offset());
+                        fcn.context.apply(entry, ctx);
                     }
                 });
             }
 
-            'sweep: while !wl.is_empty() {
-                let last_ir_allocator_reset = self.context.itable.len();
-                irb.reset();
+            // 1. linear sweep the region looking for all blocks based on jump/calls
+            while let Some(nstart) = wl.pop_front() {
+                if self.context.itable.insn(nstart).is_some() {
+                    self.blocks.insert(nstart, Default::default());
+                    continue;
+                }
 
-                let mut pctx =
-                    ParserContext::empty(&irb, self.context.lifter.translator().manager());
+                if failures.contains(nstart.offset()) {
+                    continue;
+                }
 
-                // 1. linear sweep the region looking for all blocks based on jump/calls
-                while let Some(nstart) = wl.pop_front() {
-                    if self.context.itable.insn(nstart).is_some() {
-                        self.blocks.insert(nstart, Default::default());
-                        continue;
+                let view = match segment.view_bytes_from(nstart) {
+                    Ok(view) => view,
+                    Err(_) => {
+                        continue; // skip failures
                     }
+                };
 
-                    if failures.contains(nstart.offset()) {
-                        continue;
-                    }
+                let mut offset = 0;
+                let mut address = nstart;
+                //let mut last_padding = false;
 
-                    let view = match segment.view_bytes_from(nstart) {
-                        Ok(view) => view,
-                        Err(_) => {
-                            continue; // skip failures
-                        }
-                    };
+                // 1.1. sweep until we encounter an instruction that does not fall
+                while offset < view.len() {
+                    let res = Self::update(
+                        ctx,
+                        &mut operations,
+                        &mut cache,
+                        self,
+                        &mut wl,
+                        &mut xrefs,
+                        &mut xref_properties,
+                        &address,
+                        segment,
+                        &view[offset..],
+                        &avoids,
+                    );
 
-                    let mut offset = 0;
-                    let mut address = nstart;
-                    //let mut last_padding = false;
+                    match res {
+                        Ok((kind, nfall, noffset)) => {
+                            address = nfall;
+                            offset += noffset;
 
-                    // 1.1. sweep until we encounter an instruction that does not fall
-                    while offset < view.len() {
-                        let res = Self::update(
-                            &irb,
-                            ctx,
-                            &mut pctx,
-                            &mut cache,
-                            self,
-                            &mut wl,
-                            &mut xrefs,
-                            &mut xref_properties,
-                            &address,
-                            segment,
-                            &view[offset..],
-                            &avoids,
-                        );
-
-                        match res {
-                            Ok((kind, nfall, noffset)) => {
-                                address = nfall;
+                            if kind == FallKind::Outside {
+                                //address = nfall;
                                 offset += noffset;
 
-                                if kind == FallKind::Outside {
-                                    //address = nfall;
-                                    offset += noffset;
-
-                                    //last_padding = false;
-                                    break;
-                                }
-
-                                // TODO: rewrite this bit
-                                // if last padding then maybe taken
-                                // last_padding = self.semantic_nops.contains_key(&address);
-
-                                //address = nfall;
-                                //offset += noffset;
-                            }
-                            Err(_) => {
-                                failures.insert(address.offset());
-                                // try next address as new block
-                                // TODO: maybe this should be alignment based?
-                                //
-                                // E.g., 2 + for Thumb, 4 for ARM, etc.
-                                //
-                                address = address + 1u64;
+                                //last_padding = false;
                                 break;
                             }
-                        }
 
-                        if self.context.itable.insn(address).is_some() {
+                            // TODO: rewrite this bit
+                            // if last padding then maybe taken
+                            // last_padding = self.semantic_nops.contains_key(&address);
+
+                            //address = nfall;
+                            //offset += noffset;
+                        }
+                        Err(_) => {
+                            failures.insert(address.offset());
+                            // try next address as new block
+                            // TODO: maybe this should be alignment based?
+                            //
+                            // E.g., 2 + for Thumb, 4 for ARM, etc.
+                            //
+                            address = address + 1u64;
                             break;
                         }
                     }
 
-                    if offset != 0 {
-                        // made some progress
-                        self.blocks.insert(nstart, Default::default());
+                    if self.context.itable.insn(address).is_some() {
+                        break;
                     }
+                }
 
-                    if let (true, next) = avoids.next_after_avoid(address) {
-                        if let Some(next) = next {
-                            tracing::trace!(
-                                "marking {} as next block after avoid as unexplored",
-                                next
-                            );
-                            wl.push_back(next);
-                        }
-                    } else {
-                        tracing::trace!("marking {} as unexplored", address);
-                        wl.push_back(address);
-                    }
+                if offset != 0 {
+                    // made some progress
+                    self.blocks.insert(nstart, Default::default());
+                }
 
-                    if (self.context.itable.len() - last_ir_allocator_reset)
-                        >= self.config.ir_allocator_reset_period
-                    {
-                        continue 'sweep;
+                if let (true, next) = avoids.next_after_avoid(address) {
+                    if let Some(next) = next {
+                        tracing::trace!("marking {} as next block after avoid as unexplored", next);
+                        wl.push_back(next);
                     }
+                } else {
+                    tracing::trace!("marking {} as unexplored", address);
+                    wl.push_back(address);
                 }
             }
 
@@ -1000,14 +981,13 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
         }
 
         // clean-up
-        drop(irb);
         drop(cache);
         drop(failures);
 
         if self.config.mark_xrefs_as_taken {
             let data = DataTypeDB::new(self.context.lifter);
 
-            let shift = self.context.lifter.global_space().address_size();
+            let shift = self.context.lifter.language().address_size();
             let bits = shift as u32 * 8;
 
             let mut processed = BTreeSet::new();

@@ -1,4 +1,3 @@
-use fugue::ir::il::traits::TranslatorDisplay;
 use itertools::Itertools;
 use petgraph::visit::EdgeRef;
 use petgraph::EdgeDirection;
@@ -13,6 +12,7 @@ use crate::eval::observer::common::{
 use crate::eval::observer::{Observer, ObserverError};
 use crate::eval::{Bound, Configuration, IRContext, ObserverContext};
 use crate::ir::expr::rewriter::{ExprRewriter, DEFAULT_RULES};
+use crate::ir::traits::LanguageDisplay;
 use crate::ir::{Address, Location};
 use crate::kb::id::Identifiable;
 use crate::kb::uuid;
@@ -225,7 +225,7 @@ impl Analysis for SwitchTableRecovery {
 
                             tracing::info!(
                                 "switch bound estimated to be {vals} for {}",
-                                var.display_with(Some(project.lifter.translator()))
+                                var.display_with(Some(project.lifter.language()))
                             );
                             (start, var, mv, false, it)
                         }
@@ -268,7 +268,7 @@ impl Analysis for SwitchTableRecovery {
                     if let Some((expr, bits)) = &mv {
                         tracing::trace!(
                             "overriding load via {} with {:x}",
-                            expr.display_with(Some(project.lifter.translator())),
+                            expr.display_with(Some(project.lifter.language())),
                             init
                         );
 
@@ -280,7 +280,7 @@ impl Analysis for SwitchTableRecovery {
                     } else if !va {
                         tracing::trace!(
                             "setting {} to {:x}",
-                            cond_var.display_with(Some(project.lifter.translator())),
+                            cond_var.display_with(Some(project.lifter.language())),
                             init
                         );
 
@@ -298,7 +298,7 @@ impl Analysis for SwitchTableRecovery {
                     for (c, bv) in constants.iter() {
                         tracing::trace!(
                             "setting {} to {:x}",
-                            c.display_with(Some(project.lifter.translator())),
+                            c.display_with(Some(project.lifter.language())),
                             bv
                         );
                         eval.context_mut().write_var(c, bv).ok();
@@ -307,7 +307,7 @@ impl Analysis for SwitchTableRecovery {
                     if va {
                         tracing::trace!(
                             "overriding assign to {} with {:x}",
-                            cond_var.display_with(Some(project.lifter.translator())),
+                            cond_var.display_with(Some(project.lifter.language())),
                             init
                         );
 

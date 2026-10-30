@@ -31,7 +31,7 @@ impl CacheBuilder {
 
     pub fn build_caches(&self) -> Result<(), CacheBuilderError> {
         let lb = LifterBuilder::new(&self.root)?;
-        lb.build_translator_cache()?;
+        lb.build_language_cache()?;
 
         #[cfg(feature = "import-c")]
         {

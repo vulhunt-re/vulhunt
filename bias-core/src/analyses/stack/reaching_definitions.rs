@@ -202,9 +202,9 @@ impl BlockReachingStackDefs {
         let call_state = self.call_state()?;
 
         match operand {
-            PrototypeOperand::Register { varnode, .. } => {
+            PrototypeOperand::Register(varnode) => {
                 let var = Var::new0(
-                    lifter.register_space(),
+                    lifter.register_space_id(),
                     varnode.offset(),
                     varnode.size() as u32 * 8,
                 );
@@ -213,7 +213,7 @@ impl BlockReachingStackDefs {
 
                 call_state.get(&StackVarDef::new(avar)).copied()?
             }
-            PrototypeOperand::StackRelative(offset) => {
+            PrototypeOperand::StackRelative { offset, .. } => {
                 let stack = self.call_state_sp?;
                 let stack_rel = StackVarDef::stack(stack + *offset as i64, lifter.address_bytes());
                 call_state.get(&stack_rel).copied()?

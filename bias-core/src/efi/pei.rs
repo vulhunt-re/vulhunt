@@ -41,7 +41,7 @@ impl SIDTHandler {
             .context_mut()
             .write_pointer(pei_service_addr, service_address.into())?;
 
-        let address_bits = project.lifter.address_bits() as usize;
+        let address_bits = project.lifter.address_bits();
         let address_bytes = project.lifter.address_bytes();
 
         let mut bytes = [0u8; 10];
@@ -150,7 +150,7 @@ impl GetPeiServicesFinder {
         }
 
         evaluator.register_observer(GetPeiServicesHook {
-            addr: BitVec::from_u64(service_address.into(), project.lifter.address_bits() as _),
+            addr: BitVec::from_u64(service_address.into(), project.lifter.address_bits()),
             tpidr_el0,
         });
 

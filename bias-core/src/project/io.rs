@@ -1,8 +1,7 @@
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
-use std::io::{BufRead, BufReader, Cursor, Write};
+use std::io::{BufRead, BufReader, Cursor, Read, Write};
 use std::marker::PhantomData;
-use std::ops::Range;
 
 use semver::BuildMetadata;
 use serde::de::{self, *};
@@ -17,6 +16,9 @@ use crate::kb::*;
 use crate::prelude::*;
 use crate::project::analysis::{AnalysisState, AnalysisStateInfo};
 
+const PROJECT_MAGIC: [u8; 8] = *b"BIASPROJ";
+const PROJECT_FORMAT_VERSION: u32 = 1;
+
 #[derive(Debug, Error)]
 pub enum ProjectIOError {
     #[error("compress: {0}")]
@@ -25,12 +27,56 @@ pub enum ProjectIOError {
     Decompress(std::io::Error),
     #[error("deserialise: {0}")]
     Deserialise(postcard::Error),
-    #[error("serialise: {0}")]
-    Serialise(postcard::Error),
     #[error("inconsistent serialised data: {0}")]
     InconsistentData(&'static str),
     #[error("invalid version tag: {0}")]
     InvalidVersionTag(semver::Error),
+    #[error("cannot read project file header: {0}")]
+    ReadHeader(std::io::Error),
+    #[error("serialise: {0}")]
+    Serialise(postcard::Error),
+    #[error(
+        "unsupported project file: it has no format header and predates format version {expected}; re-create the project",
+        expected = PROJECT_FORMAT_VERSION
+    )]
+    UnsupportedFormat,
+    #[error(
+        "unsupported project file format version {0}: expected version {expected}; re-create the project",
+        expected = PROJECT_FORMAT_VERSION
+    )]
+    UnsupportedVersion(u32),
+    #[error("cannot write project file header: {0}")]
+    WriteHeader(std::io::Error),
+}
+
+fn write_header(writer: &mut impl Write) -> Result<(), ProjectIOError> {
+    writer
+        .write_all(&PROJECT_MAGIC)
+        .and_then(|_| writer.write_all(&PROJECT_FORMAT_VERSION.to_le_bytes()))
+        .map_err(ProjectIOError::WriteHeader)
+}
+
+fn read_header(reader: &mut impl Read) -> Result<(), ProjectIOError> {
+    let mut magic = [0u8; PROJECT_MAGIC.len()];
+    reader
+        .read_exact(&mut magic)
+        .map_err(ProjectIOError::ReadHeader)?;
+
+    if magic != PROJECT_MAGIC {
+        return Err(ProjectIOError::UnsupportedFormat);
+    }
+
+    let mut version = [0u8; size_of::<u32>()];
+    reader
+        .read_exact(&mut version)
+        .map_err(ProjectIOError::ReadHeader)?;
+
+    let version = u32::from_le_bytes(version);
+    if version != PROJECT_FORMAT_VERSION {
+        return Err(ProjectIOError::UnsupportedVersion(version));
+    }
+
+    Ok(())
 }
 
 struct VecMapVisitor<K, V> {
@@ -156,68 +202,6 @@ impl From<usize> for InsnId {
 impl From<InsnId> for usize {
     fn from(value: InsnId) -> Self {
         value.0
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize)]
-pub enum InsnOperandData {
-    Address(Address, Option<Range<u32>>),
-    Group(Vec<InsnOperandData>),
-    Register(UstrId, Option<Range<u32>>),
-    Value(i64, Option<Range<u32>>),
-}
-
-impl InsnOperandData {
-    pub fn from_with(opnd: &InsnOperand, ir: &mut IRData) -> Self {
-        match opnd {
-            InsnOperand::Address(addr, range) => Self::Address(*addr, range.clone()),
-            InsnOperand::Group(group) => {
-                Self::Group(group.iter().map(|e| Self::from_with(e, ir)).collect())
-            }
-            InsnOperand::Register(reg, range) => {
-                Self::Register(ir.insert_ustr(*reg), range.clone())
-            }
-            InsnOperand::Value(val, range) => Self::Value(*val, range.clone()),
-        }
-    }
-
-    pub fn into_with(&self, ir: &IRData) -> InsnOperand {
-        match self {
-            Self::Address(addr, range) => InsnOperand::Address(*addr, range.clone()),
-            Self::Group(group) => {
-                InsnOperand::Group(group.iter().map(|e| e.into_with(ir)).collect())
-            }
-            Self::Register(reg, range) => InsnOperand::Register(ir.get_ustr(*reg), range.clone()),
-            Self::Value(val, range) => InsnOperand::Value(*val, range.clone()),
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize)]
-pub enum InsnTokenData {
-    Address(Address),
-    Register(UstrId),
-    Symbol(UstrId),
-    Value(i64),
-}
-
-impl InsnTokenData {
-    pub fn from_with(tok: &InsnToken, ir: &mut IRData) -> Self {
-        match tok {
-            InsnToken::Address(addr) => Self::Address(*addr),
-            InsnToken::Register(reg) => Self::Register(ir.insert_ustr(*reg)),
-            InsnToken::Symbol(sym) => Self::Symbol(ir.insert_ustr(*sym)),
-            InsnToken::Value(val) => Self::Value(*val),
-        }
-    }
-
-    pub fn into_with(&self, ir: &IRData) -> InsnToken {
-        match self {
-            Self::Address(addr) => InsnToken::Address(*addr),
-            Self::Register(reg) => InsnToken::Register(ir.get_ustr(*reg)),
-            Self::Symbol(sym) => InsnToken::Symbol(ir.get_ustr(*sym)),
-            Self::Value(val) => InsnToken::Value(*val),
-        }
     }
 }
 
@@ -1234,31 +1218,23 @@ impl AnalysisStore {
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
-pub struct LifterData<'a> {
+pub struct LifterData {
     arch: ArchitectureDef,
     arch_info: Box<dyn ErasedArch>,
     convention: String,
-    spaces: Cow<'a, SpaceManager>,
 }
 
-impl<'a> LifterData<'a> {
-    pub fn new(value: &'a Lifter) -> Self {
+impl LifterData {
+    pub fn new(value: &Lifter) -> Self {
         Self {
-            arch: value.translator().architecture().to_owned(),
+            arch: value.architecture(),
             arch_info: value.arch().clone(),
             convention: value.convention().name().to_string(),
-            spaces: Cow::Borrowed(value.translator().manager()),
         }
     }
 
-    pub fn merge(self, mut lifter: Lifter) -> Result<Lifter, ProjectIOError> {
-        let arch = lifter.translator().architecture();
-
-        if arch.processor() != self.arch.processor()
-            || arch.endian() != self.arch.endian()
-            || arch.bits() != self.arch.bits()
-            || arch.variant() != self.arch.variant()
-        {
+    pub fn merge(self, lifter: Lifter) -> Result<Lifter, ProjectIOError> {
+        if lifter.architecture() != self.arch {
             return Err(ProjectIOError::InconsistentData(
                 "lifter architecture is not compatible with the serialised lifter architecture",
             ));
@@ -1268,26 +1244,6 @@ impl<'a> LifterData<'a> {
             return Err(ProjectIOError::InconsistentData(
                 "lifter convention is not compatible with the serialised lifter convention",
             ));
-        }
-
-        for (s1, s2) in self
-            .spaces
-            .spaces()
-            .iter()
-            .zip(lifter.translator().manager().spaces().iter())
-        {
-            if s1 != s2 {
-                return Err(ProjectIOError::InconsistentData(
-                    "lifter address space mapping is not compatible with the serialised lifter",
-                ));
-            }
-        }
-
-        if self.spaces.spaces().len() > lifter.translator().manager().spaces().len() {
-            lifter
-                .translator_mut()
-                .manager_mut()
-                .clone_from(self.spaces.as_ref());
         }
 
         Ok(lifter)
@@ -1870,7 +1826,7 @@ where
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct ProjectData<'a> {
     ir: IRData,
-    lifter: LifterData<'a>,
+    lifter: LifterData,
 
     itable: UPointTable<Address, InsnInfoData>,
     cbtable: MPointTable<Address, CodeBlockData>,
@@ -2000,7 +1956,11 @@ impl<'a> ProjectData<'a> {
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, ProjectIOError> {
         let bytes = postcard::to_stdvec(self).map_err(ProjectIOError::Serialise)?;
-        zstd::encode_all(Cursor::new(bytes), 0).map_err(ProjectIOError::Compress)
+        let mut output = Vec::new();
+        write_header(&mut output)?;
+        zstd::stream::copy_encode(Cursor::new(bytes), &mut output, 0)
+            .map_err(ProjectIOError::Compress)?;
+        Ok(output)
     }
 
     pub fn from_bytes<L>(
@@ -2014,7 +1974,7 @@ impl<'a> ProjectData<'a> {
         Self::from_reader(lifter, binary, BufReader::new(Cursor::new(bytes)))
     }
 
-    pub fn to_writer<'w, W>(&self, writer: W) -> Result<(), ProjectIOError>
+    pub fn to_writer<'w, W>(&self, mut writer: W) -> Result<(), ProjectIOError>
     where
         W: 'w + Write,
     {
@@ -2048,6 +2008,8 @@ impl<'a> ProjectData<'a> {
             }
         }
 
+        write_header(&mut writer)?;
+
         let w = Wr(zstd::Encoder::new(writer, 0).map_err(ProjectIOError::Compress)?);
         postcard::serialize_with_flavor(self, w).map_err(ProjectIOError::Serialise)
     }
@@ -2055,12 +2017,14 @@ impl<'a> ProjectData<'a> {
     pub fn from_reader<'r, L, R>(
         lifter: Lifter,
         binary: &L,
-        reader: R,
+        mut reader: R,
     ) -> Result<ProjectWithAnalyses, ProjectIOError>
     where
         L: LoadedBinary,
         R: 'r + BufRead,
     {
+        read_header(&mut reader)?;
+
         let converter = ProjectDataConverter { lifter, binary };
 
         let buf = zstd::decode_all(reader).map_err(ProjectIOError::Decompress)?;
@@ -2114,5 +2078,32 @@ impl ProjectWithAnalyses {
 
     pub fn into_parts(self) -> (Project, AnalysisStore) {
         (self.project, self.analyses)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_rejects_headerless_project() {
+        let payload =
+            zstd::encode_all(Cursor::new(b"project".to_vec()), 0).expect("payload is compressible");
+
+        assert!(matches!(
+            read_header(&mut Cursor::new(payload)),
+            Err(ProjectIOError::UnsupportedFormat)
+        ));
+    }
+
+    #[test]
+    fn test_rejects_other_version() {
+        let mut header = PROJECT_MAGIC.to_vec();
+        header.extend_from_slice(&(PROJECT_FORMAT_VERSION + 1).to_le_bytes());
+
+        assert!(matches!(
+            read_header(&mut Cursor::new(header)),
+            Err(ProjectIOError::UnsupportedVersion(version)) if version == PROJECT_FORMAT_VERSION + 1
+        ));
     }
 }

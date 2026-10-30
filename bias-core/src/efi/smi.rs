@@ -2,7 +2,6 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use fugue::bv::BitVec;
-use fugue::ir::Address;
 use itertools::Itertools;
 use thiserror::Error;
 use ustr::Ustr;
@@ -17,7 +16,7 @@ use crate::efi::guids::{GuidDB, GUID_LEN};
 use crate::eval::observer::{Observer, ObserverError};
 use crate::eval::strategy::xforce::XForceStrategy;
 use crate::eval::{Bound, Configuration, IRContext, IREvaluator};
-use crate::ir::{BitSize, Expr, Location, Term, ToAddress, Var};
+use crate::ir::{Address, BitSize, Expr, Location, Term, ToAddress, Var};
 use crate::kb::function::FunctionId;
 use crate::kb::id::Identifiable;
 use crate::kb::{uuid, Lazy};
@@ -147,10 +146,7 @@ impl Observer for ObserveSmst {
         var: &Var,
     ) -> Result<(), ObserverError> {
         if matches!(var.address(), Some(addr) if self.bs_refs.contains(&addr)) {
-            context.write_var(
-                var,
-                &BitVec::from_u64(u64::from(self.bs_addr), var.nbits() as usize),
-            )?;
+            context.write_var(var, &BitVec::from_u64(u64::from(self.bs_addr), var.nbits()))?;
         }
         Ok(())
     }
@@ -162,7 +158,7 @@ impl Observer for ObserveSmst {
         var: &Var,
         val: &mut Option<BitVec>,
     ) -> Result<(), ObserverError> {
-        *val = Some(BitVec::zero(var.nbits() as usize));
+        *val = Some(BitVec::zero(var.nbits()));
         Ok(())
     }
 
@@ -250,7 +246,7 @@ impl Observer for ObserveSmst {
 
                     tracing::trace!("clearing return value of gBS->LocateProtocol at {retn_var}");
                     context
-                        .write_var(&retn_var, &BitVec::zero(retn_var.nbits() as usize))
+                        .write_var(&retn_var, &BitVec::zero(retn_var.nbits()))
                         .ok();
                 }
             }
@@ -275,7 +271,7 @@ impl Observer for ObserveSmst {
 
             tracing::trace!("clearing return value of gSmmBase2->GetSmstLocation at {retn_var}");
             context
-                .write_var(&retn_var, &BitVec::zero(retn_var.nbits() as usize))
+                .write_var(&retn_var, &BitVec::zero(retn_var.nbits()))
                 .ok();
         } else if target == self.smst_in_smm {
             tracing::info!("found call to gSmmBase2->InSmm at {}", location.address);
@@ -293,7 +289,7 @@ impl Observer for ObserveSmst {
 
             tracing::trace!("clearing return value of gSmmBase2->InSmm at {retn_var}");
             context
-                .write_var(&retn_var, &BitVec::zero(retn_var.nbits() as usize))
+                .write_var(&retn_var, &BitVec::zero(retn_var.nbits()))
                 .ok();
         } else if target == self.smm_get_capabilities {
             tracing::info!(
@@ -342,13 +338,13 @@ impl Observer for ObserveSmst {
                     "clearing return value of gSmmAccess2->GetCapabilities at {retn_var}"
                 );
                 context
-                    .write_var(&retn_var, &BitVec::zero(retn_var.nbits() as usize))
+                    .write_var(&retn_var, &BitVec::zero(retn_var.nbits()))
                     .ok();
             } else {
                 context
                     .write_var(
                         &retn_var,
-                        &BitVec::from_u64(0x8000_0000_0000_0005u64, retn_var.nbits() as usize),
+                        &BitVec::from_u64(0x8000_0000_0000_0005u64, retn_var.nbits()),
                     )
                     .ok();
             }
@@ -367,10 +363,10 @@ impl Observer for ObserveSmst {
                 tracing::info!("AllocatePool / SmmAllocatePool sentinel to {interface}");
 
                 context
-                    .write_pointer(interface, Address::from(self.sentinel_var))
+                    .write_pointer(interface, self.sentinel_var)
                     .ok();
                 context
-                    .write_var(&return_loc, &BitVec::zero(return_loc.nbits() as usize))
+                    .write_var(&return_loc, &BitVec::zero(return_loc.nbits()))
                     .ok();
 
                 let mut mapping = BTreeSet::new();
@@ -453,7 +449,7 @@ impl Observer for ObserveSmstCall {
                     .write_pointer(interface, Address::from(0xf00dfaceu32))
                     .ok();
                 context
-                    .write_var(&return_loc, &BitVec::zero(return_loc.nbits() as usize))
+                    .write_var(&return_loc, &BitVec::zero(return_loc.nbits()))
                     .ok();
             }
         }
@@ -483,7 +479,7 @@ impl Observer for ObserveXXDispatchCall {
         if var.nbits() == self.default_proto.address_bits()
             && matches!(var.address(), Some(off) if off == self.register_offset)
         {
-            *val = Some(BitVec::from_u64(self.register.into(), var.nbits() as usize));
+            *val = Some(BitVec::from_u64(self.register.into(), var.nbits()));
         }
 
         Ok(())
@@ -1020,7 +1016,7 @@ impl Analysis for SmiHandlerAnalyser {
                     write_var(
                         &mut eval,
                         &initial,
-                        &BitVec::from_u64(register_ptr.into(), addr_bits as usize),
+                        &BitVec::from_u64(register_ptr.into(), addr_bits),
                     )?;
 
                     for offset in (0..rproto_len).step_by(addr_size) {

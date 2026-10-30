@@ -1,4 +1,4 @@
-use fugue::ir::Translator;
+use fugue::lifter::runtime::language::Language;
 
 use super::{Arch, ErasedArch, FunctionThunkTemplate};
 use crate::ir::{Expr, Term};
@@ -18,7 +18,7 @@ impl Arch for EBPF {
         name == "bpf_syscall"
     }
 
-    fn external_thunk_template(&self, _translator: &Translator) -> FunctionThunkTemplate {
+    fn external_thunk_template(&self, _language: &'static Language) -> FunctionThunkTemplate {
         FunctionThunkTemplate::new([0x95, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
     }
 }

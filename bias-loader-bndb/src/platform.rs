@@ -69,20 +69,16 @@ pub(crate) fn build_lifter_for_platform(
             PipelineError::source_with("unsupported architecture for BNDB component platform")
         })?;
 
-    let translator = LifterBuilder::build_or_cached(&builder).map_err(PipelineError::source)?;
+    let language = LifterBuilder::language(&builder).map_err(PipelineError::source)?;
 
-    let convention = translator
-        .compiler_conventions()
-        .get(convention)
-        .cloned()
-        .or_else(|| translator.compiler_conventions().get("default").cloned())
+    let convention = language
+        .convention(convention)
+        .or_else(|| language.convention("default"))
         .ok_or_else(|| {
             PipelineError::source_with("no suitable convention found for BNDB component platform")
         })?;
 
-    let lifter = Lifter::new_with(translator, convention, arch_info);
-
-    Ok(lifter)
+    Lifter::new_with(language, convention, arch_info).map_err(PipelineError::source)
 }
 
 pub(crate) fn infer_platform(

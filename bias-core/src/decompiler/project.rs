@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::decompiler::error::DecompilerError;
 use crate::decompiler::ffi::{AddressRange, GhidraDecompiler, VariableNameRef};
+use crate::decompiler::is_register;
 use crate::decompiler::symbols::DecompilerSymbolResolver;
 use crate::decompiler::types::{
     DataType, DataTypeRef, DecompilerTypeDB, DecompilerTypeResolver, SpaceKind, VarInfo,
@@ -274,7 +275,7 @@ impl<'a> DecompilerProjectRef<'a> {
             SpaceKind::Global => self.resolver.resolve_global_variable_symbol(
                 project,
                 name.as_ref(),
-                unsafe { transmute(uses) },
+                unsafe { transmute::<&[u64], &[Address]>(uses) },
                 var.offset.into(),
                 type_,
                 var.size as _,
@@ -282,24 +283,22 @@ impl<'a> DecompilerProjectRef<'a> {
             SpaceKind::Stack => self.resolver.resolve_stack_variable_symbol(
                 project,
                 name.as_ref(),
-                unsafe { transmute(uses) },
+                unsafe { transmute::<&[u64], &[Address]>(uses) },
                 var.offset as i64,
                 type_,
                 var.size as _,
             ),
             SpaceKind::Register => {
-                if project
-                    .lifter()
-                    .translator()
-                    .registers()
-                    .get(var.offset, var.size as _)
-                    .is_some()
-                {
+                if is_register(project.lifter(), var.offset, var.size) {
                     self.resolver.resolve_register_symbol(
                         project,
                         name.as_ref(),
-                        unsafe { transmute(uses) },
-                        Var::new0(project.lifter().register_space(), var.offset, var.size * 8),
+                        unsafe { transmute::<&[u64], &[Address]>(uses) },
+                        Var::new0(
+                            project.lifter().register_space_id(),
+                            var.offset,
+                            var.size * 8,
+                        ),
                         type_,
                     )
                 } else {
@@ -309,8 +308,12 @@ impl<'a> DecompilerProjectRef<'a> {
             SpaceKind::Unique => self.resolver.resolve_temporary_symbol(
                 project,
                 name.as_ref(),
-                unsafe { transmute(uses) },
-                Var::new0(project.lifter().temporary_space(), var.offset, var.size * 8),
+                unsafe { transmute::<&[u64], &[Address]>(uses) },
+                Var::new0(
+                    project.lifter().temporary_space_id(),
+                    var.offset,
+                    var.size * 8,
+                ),
                 type_,
             ),
             _ => None,
@@ -361,17 +364,15 @@ impl<'a> DecompilerProjectRef<'a> {
                 var.size as _,
             ),
             SpaceKind::Register => {
-                if project
-                    .lifter()
-                    .translator()
-                    .registers()
-                    .get(var.offset, var.size as _)
-                    .is_some()
-                {
+                if is_register(project.lifter(), var.offset, var.size) {
                     self.resolver.resolve_register_type(
                         project,
                         at.into(),
-                        Var::new0(project.lifter().register_space(), var.offset, var.size * 8),
+                        Var::new0(
+                            project.lifter().register_space_id(),
+                            var.offset,
+                            var.size * 8,
+                        ),
                     )
                 } else {
                     None
@@ -380,7 +381,11 @@ impl<'a> DecompilerProjectRef<'a> {
             SpaceKind::Unique => self.resolver.resolve_temporary_type(
                 project,
                 at.into(),
-                Var::new0(project.lifter().temporary_space(), var.offset, var.size * 8),
+                Var::new0(
+                    project.lifter().temporary_space_id(),
+                    var.offset,
+                    var.size * 8,
+                ),
             ),
             _ => None,
         } {

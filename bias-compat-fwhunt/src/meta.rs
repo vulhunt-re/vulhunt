@@ -14,7 +14,17 @@ use uuid::Uuid;
 
 use crate::severity::meta_severity;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, getset::Getters, getset::MutGetters, serde::Deserialize, serde::Serialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    getset::Getters,
+    getset::MutGetters,
+    serde::Deserialize,
+    serde::Serialize,
+)]
 pub struct Link {
     #[getset(get = "pub", get_mut = "pub")]
     title: String,
@@ -22,7 +32,17 @@ pub struct Link {
     link: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, getset::Getters, getset::MutGetters, serde::Deserialize, serde::Serialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    getset::Getters,
+    getset::MutGetters,
+    serde::Deserialize,
+    serde::Serialize,
+)]
 pub struct Advisory {
     #[getset(get = "pub", get_mut = "pub")]
     title: String,
@@ -30,7 +50,17 @@ pub struct Advisory {
     links: Vec<Link>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, getset::Getters, getset::MutGetters, serde::Deserialize, serde::Serialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    getset::Getters,
+    getset::MutGetters,
+    serde::Deserialize,
+    serde::Serialize,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct VolumeGuid {
@@ -39,7 +69,9 @@ pub struct VolumeGuid {
     uuid: Uuid,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum RuleTarget {
     #[serde(rename = "firmware")]
     Firmware,
@@ -242,7 +274,17 @@ where
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, getset::Getters, getset::MutGetters, serde::Deserialize, serde::Serialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    getset::Getters,
+    getset::MutGetters,
+    serde::Deserialize,
+    serde::Serialize,
+)]
 pub struct CVSS {
     #[getset(get = "pub", get_mut = "pub")]
     version: String,
@@ -254,7 +296,17 @@ pub struct CVSS {
     vector: String,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, getset::Getters, getset::MutGetters, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    PartialEq,
+    Eq,
+    getset::Getters,
+    getset::MutGetters,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct Meta {
     #[getset(get = "pub", get_mut = "pub")]
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -342,7 +394,9 @@ pub struct Meta {
     tags: Vec<Tag>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Deserialize, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Deserialize, serde::Serialize,
+)]
 pub struct Tag {
     kind: String,
     value: String,
@@ -556,9 +610,9 @@ impl Meta {
 
     pub fn should_scan_arch(&self, lifter: &Lifter) -> bool {
         let arch = &self.architecture;
-        let larch = lifter.translator().architecture();
+        let larch = lifter.architecture();
 
-        arch.matches_with(larch)
+        arch.matches_with(&larch)
     }
 
     pub fn should_scan_raw_section(&self, uuid: &Uuid) -> bool {

@@ -46,18 +46,16 @@ impl OffsetValue for BitVec {
             return Some(self.clone());
         }
 
-        let nbits = self.bits() as u32;
+        let nbits = self.bits();
         let shift = (offset * 8) as u32;
 
-        if let Some(nsize) = nbits.checked_sub(shift) {
-            Some((self >> shift).cast(nsize as usize))
-        } else {
-            None
-        }
+        nbits
+            .checked_sub(shift)
+            .map(|nsize| (self >> shift).cast(nsize))
     }
 
     fn value_size(&self) -> usize {
-        self.bits() / 8
+        self.bits() as usize / 8
     }
 }
 

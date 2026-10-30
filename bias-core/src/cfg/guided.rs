@@ -2,14 +2,14 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::mem;
 use std::ops::Range;
 
-use fugue::ir::disassembly::{ContextDatabase, IRBuilderArena, ParserContext};
+use fugue::lifter::runtime::pcode::{LiftingContext, PCodeOp};
 use iset::IntervalMap;
 use petgraph::graph::NodeIndex;
 
 use crate::arch::ContextUpdates;
 use crate::cfg::block::BlockInfo;
 use crate::cfg::icfg::ICFGBuilderContext;
-use crate::cfg::insn::{InsnTable, InsnTermTable};
+use crate::cfg::insn::InsnTermTable;
 use crate::ir::stmt::StmtCache;
 use crate::kb::function::{FunctionEntryStrategy, FunctionInfo};
 use crate::kb::table::MPointTable;
@@ -39,8 +39,8 @@ impl GuidedFunctionEntry {
 }
 
 pub struct S0<'a, 's> {
-    ctx: ContextDatabase,
-    irb: IRBuilderArena,
+    ctx: LiftingContext,
+    operations: Vec<PCodeOp>,
     cache: StmtCache,
     itable: &'a mut InsnTermTable,
     blocks: AHashMap<Address, (NodeIndex, CodeBlockId)>,
@@ -55,7 +55,7 @@ impl<'a, 's> S0<'a, 's> {
 }
 
 pub struct S1<'a> {
-    ctx: ContextDatabase,
+    ctx: LiftingContext,
     itable: &'a mut InsnTermTable,
     blocks: AHashMap<Address, (NodeIndex, CodeBlockId)>,
     functions: BTreeMap<Address, GuidedFunctionEntry>,
@@ -72,7 +72,7 @@ impl<'a> S1<'a> {
 }
 
 pub struct S2<'a> {
-    ctx: ContextDatabase,
+    ctx: LiftingContext,
     itable: &'a mut InsnTermTable,
     block_ranges: IntervalMap<Address, NodeIndex>,
     functions: BTreeMap<Address, GuidedFunctionEntry>,
@@ -283,8 +283,8 @@ impl<'a, 's> GuidedICFGBuilder<'a, S0<'a, 's>> {
                 injections: &project.injections,
             },
             state: S0 {
-                ctx: project.lifter.context(),
-                irb: project.lifter.irb(4096),
+                ctx: project.lifter.lifting_context(),
+                operations: Vec::new(),
                 itable: &mut project.itable,
                 cache: StmtCache::default(),
                 blocks: Default::default(),
@@ -318,8 +318,8 @@ impl<'a, 's> GuidedICFGBuilder<'a, S0<'a, 's>> {
         let addr = self
             .context
             .lifter
-            .translator()
-            .address(u64::from(addr.into()));
+            .language()
+            .wrap_offset_in_default_space(addr.into().offset());
         self.state.ctx.set_variable(var.as_ref(), addr, val);
     }
 
@@ -331,80 +331,63 @@ impl<'a, 's> GuidedICFGBuilder<'a, S0<'a, 's>> {
         val: u32,
     ) {
         let Range { start, end } = range.into();
-        let start = self.context.lifter.translator().address(u64::from(start));
-        let end = self.context.lifter.translator().address(u64::from(end));
+        let language = self.context.lifter.language();
+        let start = language.wrap_offset_in_default_space(start.offset());
+        let end = language.wrap_offset_in_default_space(end.offset());
         self.state
             .ctx
             .set_variable_region(var.as_ref(), start, Some(end), val);
     }
 
     #[inline]
-    pub fn execute_with(&mut self, ir_allocator_reset_period: usize) {
+    pub fn execute(&mut self) {
         let mut worklist = mem::take(&mut self.state.worklist);
-        let ir_allocator_reset_period = if ir_allocator_reset_period == 0 {
-            10_000
-        } else {
-            ir_allocator_reset_period
-        };
 
-        'sweep: while !worklist.is_empty() {
-            self.state.irb.reset();
+        while let Some((Range { start, end }, bytes)) = worklist.pop_front() {
+            self.state.blocks.insert(start, Default::default());
 
-            let mut pctx =
-                ParserContext::empty(&self.state.irb, self.context.lifter.translator().manager());
+            if let Some(ctx_updates) = self.state.block_contexts.get(&start) {
+                let address = self
+                    .context
+                    .lifter
+                    .language()
+                    .wrap_offset_in_default_space(start.offset());
+                ctx_updates.apply(address, &mut self.state.ctx);
+            }
 
-            while let Some((Range { start, end }, bytes)) = worklist.pop_front() {
-                self.state.blocks.insert(start, Default::default());
+            let mut offset = 0;
+            let roffset = usize::from(end - start);
 
-                if let Some(ctx_updates) = self.state.block_contexts.get(&start) {
-                    let addr_val = self.context.lifter.address_value(start);
-                    ctx_updates.apply(addr_val, &mut self.state.ctx);
+            while offset < roffset {
+                let start = start + offset;
+                if self.context.itable.contains(start) {
+                    break;
                 }
 
-                let mut offset = 0;
-                let roffset = usize::from(end - start);
-
-                while offset < roffset {
-                    let start = start + offset;
-                    if self.context.itable.contains(start) {
+                let ilink = match InsnInfo::new(
+                    self.context.lifter,
+                    &mut self.state.ctx,
+                    &mut self.state.operations,
+                    &mut self.state.cache,
+                    start,
+                    &bytes[offset..],
+                ) {
+                    Ok(ilink) if ilink.len() > 0 => ilink,
+                    _ => {
                         break;
                     }
+                };
 
-                    let ilink = match InsnInfo::new(
-                        self.context.lifter,
-                        &self.state.irb,
-                        &mut self.state.ctx,
-                        &mut pctx,
-                        &mut self.state.cache,
-                        start,
-                        &bytes[offset..],
-                    ) {
-                        Ok(ilink) if ilink.len() > 0 => ilink,
-                        _ => {
-                            break;
-                        }
-                    };
+                offset += ilink.len();
 
-                    offset += ilink.len();
-
-                    if ilink.is_flow() && offset < roffset {
-                        let next = ilink.next_address();
-                        self.state.blocks.insert(next, Default::default());
-                    }
-
-                    self.context.itable.insert(ilink);
+                if ilink.is_flow() && offset < roffset {
+                    let next = ilink.next_address();
+                    self.state.blocks.insert(next, Default::default());
                 }
 
-                if self.context.itable.len() % ir_allocator_reset_period == 0 {
-                    continue 'sweep;
-                }
+                self.context.itable.insert(ilink);
             }
         }
-    }
-
-    #[inline]
-    pub fn execute(&mut self) {
-        self.execute_with(10_000usize);
     }
 
     #[inline]

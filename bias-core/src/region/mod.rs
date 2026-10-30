@@ -7,7 +7,6 @@ use std::ops::Range;
 
 use fugue::bv::BitVec;
 use fugue::bytes::{ByteCast, Endian, BE, LE};
-use fugue::ir::Address;
 use iset::IntervalMap;
 use itertools::{Itertools, Position};
 use thiserror::Error;
@@ -15,6 +14,7 @@ use ustr::Ustr;
 
 use crate::arch::AddressRangeSet;
 use crate::cfg::insn::InsnTable;
+use crate::ir::Address;
 use crate::project::ProjectContext;
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -179,10 +179,10 @@ impl Region {
             Ok(bv)
         } else if self.endian().is_little() {
             // truncate msb bits
-            Ok(bv.cast(bits as usize))
+            Ok(bv.cast(bits))
         } else {
             // shift out lsb bits and truncate
-            Ok((bv >> (8 - (bits % 8))).cast(bits as usize))
+            Ok((bv >> (8 - (bits % 8))).cast(bits))
         }
     }
 
@@ -207,7 +207,7 @@ impl Region {
             }
         } else {
             let nbits = count * 8;
-            let shift = 8 - (bits as u32 % 8);
+            let shift = 8 - (bits % 8);
 
             if endian.is_little() {
                 let mask = BitVec::max_value_with(nbits, false) >> shift;
@@ -233,9 +233,9 @@ impl Region {
     ) -> Result<T, RegionIOError> {
         let range = self.view_bytes(address, T::SIZEOF)?;
         Ok(if self.endian().is_little() {
-            T::from_bytes::<LE>(range)
+            T::read_bytes::<LE>(range)
         } else {
-            T::from_bytes::<BE>(range)
+            T::read_bytes::<BE>(range)
         })
     }
 
@@ -265,9 +265,9 @@ impl Region {
         let value = value.borrow();
 
         Ok(if endian.is_little() {
-            value.into_bytes::<LE>(range)
+            value.write_bytes::<LE>(range)
         } else {
-            value.into_bytes::<BE>(range)
+            value.write_bytes::<BE>(range)
         })
     }
 

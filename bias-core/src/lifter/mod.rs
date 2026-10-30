@@ -1,31 +1,32 @@
 use std::borrow::Cow;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{self, BufWriter, Write};
 use std::iter::repeat;
-use std::mem;
-use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use ahash::{AHashMap, AHashSet};
+use flate2::write::GzEncoder;
+use fugue::arch::{ArchDefParseError, ArchitectureDef};
 use fugue::bytes::Endian;
-use fugue::ir::compiler::CallFixup;
-use fugue::ir::convention::{Convention, PrototypeEntry, PrototypeOperand, ReturnAddress};
-use fugue::ir::disassembly::{ContextDatabase, IRBuilderArena, ParserContext};
-use fugue::ir::error::Error;
-use fugue::ir::language::LanguageBuilder;
-use fugue::ir::{Address, AddressSpace, AddressSpaceId, AddressValue, LanguageDB, Translator};
-use once_cell::sync::Lazy;
-use ouroboros::self_referencing;
+use fugue::lifter::dynamic::{Language as DynamicLanguage, LanguageBuildError};
+use fugue::lifter::runtime::convention::{
+    CallFixup, Convention, Prototype, PrototypeEntry, PrototypeOperand, ReturnAddress,
+};
+use fugue::lifter::runtime::language::{Language, LanguageId, LanguageParseError};
+use fugue::lifter::runtime::ContextDatabase;
+use fugue::lifter::{LanguageLoadError, LiftingContext};
+use fugue::sleigh::language::language::{LanguageDefBuilder, LanguageError};
+use fugue::sleigh::language::spaces::AddressSpaceId;
+use fugue::sleigh::language::LanguageDB;
 use thiserror::Error;
 use ustr::{Ustr, UstrMap};
 
 use crate::arch::{DefaultArch, ErasedArch};
 use crate::ir::insn::{Insn, InsnText};
-use crate::ir::{BitSize, FloatKind, Var, VarView};
+use crate::ir::{Address, BitSize, FloatKind, Var, VarView};
 use crate::kb::operand::Operand;
 use crate::region::Memory;
-
-static TRANSLATORS: Lazy<RwLock<AHashMap<String, Arc<Translator>>>> = Lazy::new(Default::default);
 
 #[derive(Clone)]
 pub struct LifterBuilder {
@@ -35,19 +36,39 @@ pub struct LifterBuilder {
 #[derive(Debug, Error)]
 pub enum LifterBuilderError {
     #[error(transparent)]
-    ArchDef(#[from] fugue::arch::ArchDefParseError),
+    ArchDef(#[from] ArchDefParseError),
+    #[error("cannot write language package `{0}`: {1}")]
+    FileIO(PathBuf, io::Error),
     #[error(transparent)]
-    Backend(#[from] fugue::ir::error::Error),
-    #[error("failed to deserialise lifter: {0}; regenerate it using bias-lutil")]
-    Deserialisation(bincode::Error),
+    LanguageBuild(#[from] LanguageBuildError),
     #[error(transparent)]
-    FileIO(#[from] std::io::Error),
-    #[error("failed to serialise lifter: {0}")]
-    Serialisation(bincode::Error),
+    LanguageDB(#[from] LanguageError),
+    #[error("invalid language identifier `{0}`: {1}")]
+    LanguageId(String, LanguageParseError),
+    #[error(transparent)]
+    LanguageLoad(#[from] LanguageLoadError),
+    #[error("calling convention `{0}` has no default prototype")]
+    MissingDefaultPrototype(&'static str),
+    #[error("cannot serialise language package `{0}`: {1}")]
+    Serialisation(PathBuf, rkyv::rancor::Error),
     #[error("unsupported architecture")]
     UnsupportedArch,
     #[error("unsupported architecture calling convention")]
     UnsupportedConv,
+}
+
+impl LifterBuilderError {
+    fn file_io(path: impl Into<PathBuf>, source: io::Error) -> Self {
+        Self::FileIO(path.into(), source)
+    }
+
+    fn language_id(id: impl Into<String>, source: LanguageParseError) -> Self {
+        Self::LanguageId(id.into(), source)
+    }
+
+    fn serialisation(path: impl Into<PathBuf>, source: rkyv::rancor::Error) -> Self {
+        Self::Serialisation(path.into(), source)
+    }
 }
 
 impl LifterBuilder {
@@ -63,56 +84,40 @@ impl LifterBuilder {
         Self::new_with(path, true)
     }
 
-    pub fn build_or_cached(
-        builder: &LanguageBuilder,
-    ) -> Result<Arc<Translator>, LifterBuilderError> {
-        if let Some(translator) = TRANSLATORS.read().unwrap().get(builder.language().id()) {
-            return Ok(translator.clone());
+    pub fn language_db(&self) -> &LanguageDB {
+        &self.language_db
+    }
+
+    fn language_package_path(builder: &LanguageDefBuilder) -> PathBuf {
+        let language = builder.language();
+        language
+            .sla_file()
+            .with_file_name(language.id().replace(':', "-"))
+            .with_extension("flift")
+    }
+
+    pub fn language(builder: &LanguageDefBuilder) -> Result<&'static Language, LifterBuilderError> {
+        let language = builder.language();
+        let id = language
+            .id()
+            .parse::<LanguageId>()
+            .map_err(|e| LifterBuilderError::language_id(language.id(), e))?;
+
+        if let Some(installed) = Language::lookup(&id) {
+            return Ok(installed);
         }
 
-        let cpath = builder
-            .language()
-            .sla_file()
-            .with_file_name(format!("{}", builder.language().id()).replace(":", "-"))
-            .with_extension("bin");
+        let package = Self::language_package_path(builder);
+        if package.is_file() {
+            tracing::trace!("loading language from {}", package.display());
+            return Ok(Language::from_file(&package)?);
+        }
 
-        let translator = if let Ok(cached) = File::open(&cpath) {
-            let reader = BufReader::new(cached);
+        let sla = language.sla_file();
+        tracing::trace!("building language from {}", sla.display());
 
-            let mut translator = bincode::deserialize_from::<_, Translator>(reader)
-                .map_err(LifterBuilderError::Deserialisation)?;
-
-            if translator.compiler_conventions().is_empty() {
-                tracing::trace!(
-                    "building translator from {} (deserialised translator is corrupt)",
-                    builder.language().sla_file().display()
-                );
-
-                builder.build().map_err(LifterBuilderError::from)
-            } else {
-                tracing::trace!("using cached translator from {}", cpath.display());
-
-                builder.apply_context(&mut translator);
-
-                Ok(translator)
-            }
-        } else {
-            tracing::trace!(
-                "building translator from {}",
-                builder.language().sla_file().display()
-            );
-
-            builder.build().map_err(LifterBuilderError::from)
-        }?;
-
-        let translator = Arc::new(translator);
-
-        TRANSLATORS
-            .write()
-            .unwrap()
-            .insert(builder.language().id().to_owned(), translator.clone());
-
-        Ok(translator)
+        let specs = sla.parent().unwrap_or_else(|| Path::new("."));
+        Ok(Language::from_sleigh_with_sla(specs, language.id(), sla)?)
     }
 
     pub fn build(
@@ -121,19 +126,12 @@ impl LifterBuilder {
         convention: impl AsRef<str>,
     ) -> Result<Lifter, LifterBuilderError> {
         let tag = tag.into();
-        let convention = convention.as_ref();
-
         let builder = self
             .language_db
             .lookup_str(&*tag)?
-            .ok_or_else(|| LifterBuilderError::UnsupportedArch)?;
-        let translator = Self::build_or_cached(&builder)?;
+            .ok_or(LifterBuilderError::UnsupportedArch)?;
 
-        if let Some(convention) = translator.compiler_conventions().get(&*convention).cloned() {
-            Ok(Lifter::new(translator, convention))
-        } else {
-            Err(LifterBuilderError::UnsupportedConv)
-        }
+        Lifter::from_language(Self::language(&builder)?, convention.as_ref())
     }
 
     pub fn build_with(
@@ -144,50 +142,15 @@ impl LifterBuilder {
         variant: impl AsRef<str>,
         convention: impl AsRef<str>,
     ) -> Result<Lifter, LifterBuilderError> {
-        let convention = convention.as_ref();
-
-        let processor = processor.as_ref();
-        let variant = variant.as_ref();
-
         let builder = self
             .language_db
-            .lookup(processor, endian, bits as usize, variant)
-            .ok_or_else(|| LifterBuilderError::UnsupportedArch)?;
-        let translator = Self::build_or_cached(&builder)?;
+            .lookup(processor.as_ref(), endian, bits, variant.as_ref())
+            .ok_or(LifterBuilderError::UnsupportedArch)?;
 
-        if let Some(convention) = translator.compiler_conventions().get(&*convention).cloned() {
-            Ok(Lifter::new(translator, convention))
-        } else {
-            Err(LifterBuilderError::UnsupportedConv)
-        }
+        Lifter::from_language(Self::language(&builder)?, convention.as_ref())
     }
 
-    pub fn cache_translator(
-        &self,
-        tag: impl Into<Cow<'static, str>>,
-    ) -> Result<(), LifterBuilderError> {
-        let tag = tag.into();
-
-        let builder = self
-            .language_db
-            .lookup_str(&*tag)?
-            .ok_or_else(|| LifterBuilderError::UnsupportedArch)?;
-
-        let translator = builder.build_with(false)?;
-        let cached = builder
-            .language()
-            .sla_file()
-            .with_file_name(format!("{}", builder.language().id()).replace(":", "-"))
-            .with_extension("bin");
-
-        let mut writer = BufWriter::new(File::create(cached).map_err(LifterBuilderError::from)?);
-        bincode::serialize_into(&mut writer, &translator)
-            .map_err(LifterBuilderError::Serialisation)?;
-
-        Ok(())
-    }
-
-    pub fn build_translator_cache(&self) -> Result<(), LifterBuilderError> {
+    pub fn build_language_cache(&self) -> Result<(), LifterBuilderError> {
         let mut processed = AHashSet::new();
 
         tracing::trace!(
@@ -198,100 +161,79 @@ impl LifterBuilder {
         for builder in self
             .language_db
             .iter()
-            .filter(|builder| builder.language().compiler_specs().len() > 0)
+            .filter(|builder| !builder.language().compiler_defs().is_empty())
         {
-            let cached = builder
-                .language()
-                .sla_file()
-                .with_file_name(format!("{}", builder.language().id()).replace(":", "-"))
-                .with_extension("bin");
-
-            if !processed.contains(&cached) {
-                let translator = builder.build_with(false)?;
-
-                let conventions = translator
-                    .compiler_conventions()
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>();
-
-                tracing::debug!(
-                    path = %cached.display(),
-                    ?conventions,
-                    "creating cached translator"
-                );
-
-                let mut writer =
-                    BufWriter::new(File::create(&cached).map_err(LifterBuilderError::from)?);
-                bincode::serialize_into(&mut writer, &translator)
-                    .map_err(LifterBuilderError::Serialisation)?;
-
-                processed.insert(cached);
+            let package = Self::language_package_path(&builder);
+            if !processed.insert(package.clone()) {
+                continue;
             }
+
+            let language = builder.language();
+            let sla = language.sla_file();
+            let specs = sla.parent().unwrap_or_else(|| Path::new("."));
+            let dynamic = DynamicLanguage::build_with_sla(specs, language.id(), sla)?;
+
+            tracing::debug!(path = %package.display(), "creating language package");
+
+            let bytes = dynamic
+                .to_bytes()
+                .map_err(|e| LifterBuilderError::serialisation(&package, e))?;
+
+            let file =
+                File::create(&package).map_err(|e| LifterBuilderError::file_io(&package, e))?;
+            let mut writer = GzEncoder::new(BufWriter::new(file), Default::default());
+            writer
+                .write_all(bytes.as_ref())
+                .and_then(|_| writer.finish().map(|_| ()))
+                .map_err(|e| LifterBuilderError::file_io(&package, e))?;
         }
 
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone)]
 pub struct PrototypeResolver {
     address_bits: u32,
     global_space: AddressSpaceId,
     register_space: AddressSpaceId,
-    return_: ReturnAddress,
+    return_: Option<ReturnAddress>,
 }
 
 impl PrototypeResolver {
+    fn register(&self, offset: u64, size: usize) -> Var {
+        Var::new(self.register_space, offset, size as u32 * 8, 0)
+    }
+
+    fn stack(&self, stack_base: Address, offset: u64) -> Var {
+        let addr = stack_base + offset;
+        Var::new(self.global_space, addr.into(), self.address_bits, 0)
+    }
+
     pub fn resolve(&self, operand: &PrototypeOperand, stack_base: Address) -> Option<Var> {
         match operand {
-            PrototypeOperand::Register { varnode, .. } => Some(Var::new(
-                self.register_space,
-                varnode.offset(),
-                varnode.size() as u32 * 8,
-                0,
-            )),
-            PrototypeOperand::StackRelative(offset) => {
-                let addr = stack_base + *offset;
-
-                Some(Var::new(
-                    self.global_space,
-                    addr.into(),
-                    self.address_bits,
-                    0,
-                ))
+            PrototypeOperand::Register(varnode) => {
+                Some(self.register(varnode.offset(), varnode.size()))
             }
-            // other case is a join
+            PrototypeOperand::StackRelative { offset, .. } => Some(self.stack(stack_base, *offset)),
             _ => None,
         }
     }
 
     pub fn resolve_register(&self, operand: &PrototypeOperand) -> Option<Var> {
-        if let PrototypeOperand::Register { varnode, .. } = operand {
-            Some(Var::new(
-                self.register_space,
-                varnode.offset(),
-                varnode.size() as u32 * 8,
-                0,
-            ))
+        if let PrototypeOperand::Register(varnode) = operand {
+            Some(self.register(varnode.offset(), varnode.size()))
         } else {
             None
         }
     }
 
-    pub fn resolve_return(&self, stack_base: Address) -> Var {
-        match self.return_ {
-            ReturnAddress::Register { varnode, .. } => Var::new(
-                self.register_space,
-                varnode.offset(),
-                varnode.size() as u32 * 8,
-                0,
-            ),
-            ReturnAddress::StackRelative { offset, .. } => {
-                let addr = stack_base + offset;
-
-                Var::new(self.global_space, addr.into(), self.address_bits, 0)
+    pub fn resolve_return(&self, stack_base: Address) -> Option<Var> {
+        match self.return_? {
+            ReturnAddress::Register(varnode) => {
+                Some(self.register(varnode.offset(), varnode.size()))
             }
+            ReturnAddress::StackRelative { offset, .. } => Some(self.stack(stack_base, offset)),
         }
     }
 
@@ -304,14 +246,9 @@ impl PrototypeResolver {
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone)]
 pub struct DefaultPrototype {
-    inputs: Vec<PrototypeEntry>,
-    outputs: Vec<PrototypeEntry>,
-    killed_by_call: Vec<PrototypeOperand>,
-    likely_trashed: Vec<PrototypeOperand>,
-    unaffected: Vec<PrototypeOperand>,
-    extra_pop: u64,
+    prototype: &'static Prototype,
     resolver: PrototypeResolver,
 }
 
@@ -320,127 +257,135 @@ impl DefaultPrototype {
         self.input_operand_with(index, None)
     }
 
-    pub fn input_operand_with<T>(&self, index: usize, meta: T) -> Option<Operand>
-    where
-        T: Into<Option<String>>,
-    {
-        match self.input_with(index, meta)? {
-            PrototypeOperand::Register { varnode, .. } => Some(Operand::Register(Var::new0(
-                self.resolver.register_space,
-                varnode.offset(),
-                varnode.size() as u32 * 8,
-            ))),
-            PrototypeOperand::StackRelative(offset) => {
-                Some(Operand::Stack(*offset as _, self.address_bytes()))
-            }
-            _ => None,
-        }
+    pub fn input_operand_with<'a>(
+        &self,
+        index: usize,
+        meta: impl Into<Option<&'a str>>,
+    ) -> Option<Operand> {
+        self.operand(self.input_with(index, meta)?)
     }
 
     pub fn output_operand(&self, index: usize) -> Option<Operand> {
         self.output_operand_with(index, None)
     }
 
-    pub fn output_operand_with<T>(&self, index: usize, meta: T) -> Option<Operand>
-    where
-        T: Into<Option<String>>,
-    {
-        match self.output_with(index, meta)? {
-            PrototypeOperand::Register { varnode, .. } => Some(Operand::Register(Var::new0(
+    pub fn output_operand_with<'a>(
+        &self,
+        index: usize,
+        meta: impl Into<Option<&'a str>>,
+    ) -> Option<Operand> {
+        self.operand(self.output_with(index, meta)?)
+    }
+
+    fn operand(&self, operand: &PrototypeOperand) -> Option<Operand> {
+        match operand {
+            PrototypeOperand::Register(varnode) => Some(Operand::Register(Var::new0(
                 self.resolver.register_space,
                 varnode.offset(),
                 varnode.size() as u32 * 8,
             ))),
-            PrototypeOperand::StackRelative(offset) => {
+            PrototypeOperand::StackRelative { offset, .. } => {
                 Some(Operand::Stack(*offset as _, self.address_bytes()))
             }
             _ => None,
         }
     }
 
-    pub fn input_with<T>(&self, index: usize, meta: T) -> Option<&PrototypeOperand>
-    where
-        T: Into<Option<String>>,
-    {
+    fn entry_with<'a>(
+        entries: &'static [PrototypeEntry],
+        index: usize,
+        meta: impl Into<Option<&'a str>>,
+    ) -> Option<&'static PrototypeOperand> {
         let meta = meta.into();
-        self.inputs
+        entries
             .iter()
-            .filter(|mt| *mt.meta_type() == meta)
+            .filter(|entry| entry.meta_type() == meta)
             .nth(index)
-            .map(|t| t.operand())
+            .map(PrototypeEntry::operand)
     }
 
-    pub fn input(&self, index: usize) -> Option<&PrototypeOperand> {
+    pub fn input_with<'a>(
+        &self,
+        index: usize,
+        meta: impl Into<Option<&'a str>>,
+    ) -> Option<&'static PrototypeOperand> {
+        Self::entry_with(self.prototype.inputs(), index, meta)
+    }
+
+    pub fn input(&self, index: usize) -> Option<&'static PrototypeOperand> {
         self.input_with(index, None)
     }
 
-    pub fn resolved_input_with<T>(&self, index: usize, meta: T, stack_base: Address) -> Option<Var>
-    where
-        T: Into<Option<String>>,
-    {
+    pub fn resolved_input_with<'a>(
+        &self,
+        index: usize,
+        meta: impl Into<Option<&'a str>>,
+        stack_base: Address,
+    ) -> Option<Var> {
         self.input_with(index, meta)
-            .and_then(|t| self.resolver.resolve(t, stack_base))
+            .and_then(|operand| self.resolver.resolve(operand, stack_base))
     }
 
     pub fn resolved_input(&self, index: usize, stack_base: Address) -> Option<Var> {
         self.resolved_input_with(index, None, stack_base)
     }
 
-    pub fn output_with<T>(&self, index: usize, meta: T) -> Option<&PrototypeOperand>
-    where
-        T: Into<Option<String>>,
-    {
-        let meta = meta.into();
-        self.outputs
-            .iter()
-            .filter(|mt| *mt.meta_type() == meta)
-            .nth(index)
-            .map(|t| t.operand())
+    pub fn output_with<'a>(
+        &self,
+        index: usize,
+        meta: impl Into<Option<&'a str>>,
+    ) -> Option<&'static PrototypeOperand> {
+        Self::entry_with(self.prototype.outputs(), index, meta)
     }
 
-    pub fn output(&self, index: usize) -> Option<&PrototypeOperand> {
+    pub fn output(&self, index: usize) -> Option<&'static PrototypeOperand> {
         self.output_with(index, None)
     }
 
-    pub fn resolved_output_with<T>(&self, index: usize, meta: T, stack_base: Address) -> Option<Var>
-    where
-        T: Into<Option<String>>,
-    {
+    pub fn resolved_output_with<'a>(
+        &self,
+        index: usize,
+        meta: impl Into<Option<&'a str>>,
+        stack_base: Address,
+    ) -> Option<Var> {
         self.output_with(index, meta)
-            .and_then(|t| self.resolver.resolve(t, stack_base))
+            .and_then(|operand| self.resolver.resolve(operand, stack_base))
     }
 
     pub fn resolved_output(&self, index: usize, stack_base: Address) -> Option<Var> {
         self.resolved_output_with(index, None, stack_base)
     }
 
-    pub fn output_registers<'a>(&'a self) -> impl Iterator<Item = Var> + 'a {
-        self.outputs
+    pub fn output_registers(&self) -> impl Iterator<Item = Var> + '_ {
+        self.prototype
+            .outputs()
             .iter()
-            .map(|t| t.operand())
-            .filter_map(|var| self.resolver.resolve_register(var))
+            .filter_map(|entry| self.resolver.resolve_register(entry.operand()))
     }
 
-    pub fn likely_killed_registers<'a>(&'a self) -> impl Iterator<Item = Var> + 'a {
-        self.likely_trashed
+    pub fn likely_killed_registers(&self) -> impl Iterator<Item = Var> + '_ {
+        self.prototype
+            .likely_trashed()
             .iter()
-            .filter_map(|var| self.resolver.resolve_register(var))
+            .filter_map(|operand| self.resolver.resolve_register(operand))
     }
 
-    pub fn killed_registers<'a>(&'a self) -> impl Iterator<Item = Var> + 'a {
-        self.killed_by_call
+    pub fn killed_registers(&self) -> impl Iterator<Item = Var> + '_ {
+        self.prototype
+            .killed_by_call()
             .iter()
-            .filter_map(|var| self.resolver.resolve_register(var))
+            .filter_map(|operand| self.resolver.resolve_register(operand))
     }
 
-    pub fn unaffected_registers<'a>(&'a self) -> impl Iterator<Item = Var> + 'a {
-        self.unaffected
+    pub fn unaffected_registers(&self) -> impl Iterator<Item = Var> + '_ {
+        self.prototype
+            .unaffected()
             .iter()
-            .filter_map(|var| self.resolver.resolve_register(var))
+            .filter_map(|operand| self.resolver.resolve_register(operand))
     }
 
-    pub fn extra_pop(&self) -> u64 {
-        self.extra_pop
+    pub fn extra_pop(&self) -> Option<u64> {
+        self.prototype.extra_pop()
     }
 
     pub fn address_bytes(&self) -> usize {
@@ -460,19 +405,15 @@ impl DefaultPrototype {
     }
 }
 
-#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Clone)]
 pub struct Lifter {
     arch: Box<dyn ErasedArch>,
-    translator: Arc<Translator>,
-    convention: Convention,
-    register_space: AddressSpaceId,
+    language: &'static Language,
+    convention: &'static Convention,
+    default_prototype: &'static Prototype,
     register_map: Arc<VarView>,
 
     float_kinds: AHashMap<u32, FloatKind>,
-
-    global_space: AddressSpaceId,
-    //stack_space: AddressSpaceId,
-    temporary_space: AddressSpaceId,
 
     program_counter: Var,
     stack_pointer: Var,
@@ -483,64 +424,73 @@ pub struct Lifter {
 
 #[derive(Debug, Error)]
 pub enum LifterError {
-    #[error(transparent)]
-    Disassembly(#[from] fugue::ir::error::Error),
+    #[error("cannot disassemble instruction at {0}")]
+    Disassembly(Address),
+    #[error("cannot format instruction at {0}")]
+    Format(Address),
+    #[error("instruction at {address} is not aligned to {alignment} bytes")]
+    IncorrectAlignment { address: Address, alignment: usize },
+    #[error("cannot lift instruction at {0}")]
+    Lift(Address),
+    #[error("address {0} is not mapped")]
+    UnmappedAddress(Address),
 }
 
 impl Lifter {
-    pub fn new<T>(translator: T, convention: Convention) -> Self
-    where
-        T: Into<Arc<Translator>>,
-    {
-        Self::new_with(translator, convention, Box::new(DefaultArch))
+    pub fn from_language(
+        language: &'static Language,
+        convention: &str,
+    ) -> Result<Self, LifterBuilderError> {
+        let convention = language
+            .convention(convention)
+            .ok_or(LifterBuilderError::UnsupportedConv)?;
+        Self::new(language, convention)
     }
 
-    pub fn new_with<T>(translator: T, convention: Convention, arch: Box<dyn ErasedArch>) -> Self
-    where
-        T: Into<Arc<Translator>>,
-    {
-        let translator = translator.into();
-        let register_map = VarView::registers(&*translator);
-        let register_space = register_map.space();
-        let default_space = translator.manager().default_space();
-        let unique_space = translator.manager().unique_space();
+    pub fn new(
+        language: &'static Language,
+        convention: &'static Convention,
+    ) -> Result<Self, LifterBuilderError> {
+        Self::new_with(language, convention, Box::new(DefaultArch))
+    }
 
-        /*
-        let global_space = translator
-            .manager_mut()
-            .add_space_like("global", &*default_space)
-            .id();
-        let stack_space = translator
-            .manager_mut()
-            .add_space_like("stack", &*default_space)
-            .id();
-        let temporary_space = translator
-            .manager_mut()
-            .add_space_like("tmp", &*default_space)
-            .id();
-        */
+    pub fn new_with(
+        language: &'static Language,
+        convention: &'static Convention,
+        arch: Box<dyn ErasedArch>,
+    ) -> Result<Self, LifterBuilderError> {
+        let default_prototype =
+            convention
+                .default_prototype()
+                .ok_or(LifterBuilderError::MissingDefaultPrototype(
+                    convention.name(),
+                ))?;
 
+        let register_map = VarView::registers(language);
+        let register_space = language.space_id(language.register_space());
+
+        let program_counter = language.program_counter();
         let program_counter = Var::new(
             register_space,
-            translator.program_counter().offset(),
-            translator.program_counter().size() as u32 * 8,
+            program_counter.offset(),
+            program_counter.size() as u32 * 8,
             0,
         );
 
-        let conv_sp = convention.stack_pointer();
+        let stack_pointer = convention.stack_pointer();
         let stack_pointer = Var::new(
             register_space,
-            conv_sp.varnode().offset(),
-            conv_sp.varnode().size() as u32 * 8,
+            stack_pointer.offset(),
+            stack_pointer.size() as u32 * 8,
             0,
         );
 
-        let frame_pointer = arch.frame_pointer(&translator);
+        let frame_pointer = arch.frame_pointer(language);
 
-        let float_kinds = translator
+        let float_kinds = language
             .float_formats()
             .iter()
-            .map(|(sz, fmt)| (*sz as u32, (**fmt).clone().into()))
+            .map(|format| (format.bits() as u32, format.clone().into()))
             .collect();
 
         let call_fixups = convention
@@ -551,26 +501,23 @@ impl Lifter {
                 fixup
                     .targets()
                     .iter()
-                    .map(|s| Ustr::from(s))
+                    .map(|target| Ustr::from(target))
                     .zip(repeat(index))
             })
             .collect();
 
-        Self {
+        Ok(Self {
             arch,
-            translator,
+            language,
             convention,
+            default_prototype,
             call_fixups,
-            register_space,
             register_map: Arc::new(register_map),
             float_kinds,
-            global_space: default_space.id(),
-            //stack_space,
-            temporary_space: unique_space.id(),
             program_counter,
             stack_pointer,
             frame_pointer,
-        }
+        })
     }
 
     pub fn arch(&self) -> &Box<dyn ErasedArch> {
@@ -578,11 +525,16 @@ impl Lifter {
     }
 
     pub fn endian(&self) -> Endian {
-        if self.translator.is_big_endian() {
-            Endian::Big
-        } else {
-            Endian::Little
-        }
+        self.language.endian()
+    }
+
+    pub fn architecture(&self) -> ArchitectureDef {
+        ArchitectureDef::new(
+            self.language.processor(),
+            self.endian(),
+            self.language.bits(),
+            self.language.variant(),
+        )
     }
 
     pub fn program_counter(&self) -> Var {
@@ -605,10 +557,6 @@ impl Lifter {
         self.program_counter.nbits() as usize / 8
     }
 
-    pub fn address_value(&self, address: impl Into<Address>) -> AddressValue {
-        self.translator.address(address.into().offset())
-    }
-
     pub fn float_kind(&self, bits: u32) -> Option<&FloatKind> {
         self.float_kinds.get(&bits)
     }
@@ -617,35 +565,33 @@ impl Lifter {
         &self.float_kinds
     }
 
-    pub fn call_fixup_for(&self, nm: impl AsRef<str>) -> Option<&CallFixup> {
-        self.convention.call_fixups().get(
-            self.call_fixups
-                .get(&Ustr::from_existing(nm.as_ref())?)
-                .copied()?,
-        )
+    pub fn call_fixup_for(&self, name: impl AsRef<str>) -> Option<&'static CallFixup> {
+        let index = self
+            .call_fixups
+            .get(&Ustr::from_existing(name.as_ref())?)
+            .copied()?;
+        self.convention.call_fixups().get(index)
     }
 
-    pub fn convention(&self) -> &Convention {
-        &self.convention
+    pub fn convention(&self) -> &'static Convention {
+        self.convention
     }
 
     pub fn context(&self) -> ContextDatabase {
-        self.translator.context_database()
+        self.language.default_context()
     }
 
-    pub fn irb(&self, size: usize) -> IRBuilderArena {
-        IRBuilderArena::with_capacity(size)
+    pub fn lifting_context(&self) -> LiftingContext {
+        self.lifting_context_with(self.context())
+    }
+
+    pub fn lifting_context_with(&self, context: ContextDatabase) -> LiftingContext {
+        LiftingContext::new(self.language, 2, context, self.language.unique_mask())
     }
 
     pub fn default_prototype(&self) -> DefaultPrototype {
-        let prototype = self.convention().default_prototype();
         DefaultPrototype {
-            inputs: prototype.inputs().to_vec(),
-            outputs: prototype.outputs().to_vec(),
-            unaffected: prototype.unaffected().to_vec(),
-            killed_by_call: prototype.killed_by_call().to_vec(),
-            likely_trashed: prototype.likely_trashed().to_vec(),
-            extra_pop: prototype.extra_pop(),
+            prototype: self.default_prototype,
             resolver: self.prototype_resolver(),
         }
     }
@@ -655,186 +601,98 @@ impl Lifter {
             address_bits: self.address_bits(),
             global_space: self.global_space_id(),
             register_space: self.register_space_id(),
-            return_: self.convention().return_address().clone(),
+            return_: self.convention.return_address(),
         }
     }
 
     pub fn prototype_register_var(&self, operand: &PrototypeOperand) -> Option<Var> {
-        if let PrototypeOperand::Register { varnode, .. } = operand {
-            Some(Var::new(
-                self.register_space(),
-                varnode.offset(),
-                varnode.size() as u32 * 8,
-                0,
-            ))
-        } else {
-            None
-        }
+        self.prototype_resolver().resolve_register(operand)
     }
 
     pub fn prototype_var(&self, operand: &PrototypeOperand, stack_base: Address) -> Option<Var> {
         match operand {
-            PrototypeOperand::Register { varnode, .. } => Some(Var::new(
-                self.register_space(),
+            PrototypeOperand::Register(varnode) => Some(Var::new(
+                self.register_space_id(),
                 varnode.offset(),
                 varnode.size() as u32 * 8,
                 0,
             )),
-            PrototypeOperand::StackRelative(offset) => {
+            PrototypeOperand::StackRelative { offset, .. } => {
                 let addr = stack_base + *offset;
-                let addr_bits = self.global_space().address_size() as u32 * 8;
+                let addr_bits = self.language.address_size() as u32 * 8;
 
-                Some(Var::new(self.global_space(), addr.into(), addr_bits, 0))
+                Some(Var::new(self.global_space_id(), addr.into(), addr_bits, 0))
             }
-            // other case is a join
             _ => None,
         }
     }
 
-    pub fn global_space(&self) -> &AddressSpace {
-        self.translator().manager().space_by_id(self.global_space)
-    }
-
     pub fn global_space_id(&self) -> AddressSpaceId {
-        self.global_space
+        self.language.space_id(self.language.default_space())
     }
 
     pub fn register_map(&self) -> &Arc<VarView> {
         &self.register_map
     }
 
-    pub fn register_space(&self) -> &AddressSpace {
-        self.translator().manager().space_by_id(self.register_space)
-    }
-
     pub fn register_space_id(&self) -> AddressSpaceId {
-        self.register_space
+        self.language.space_id(self.language.register_space())
     }
 
     pub fn register_var(&self, name: &str) -> Option<Var> {
-        self.translator
-            .register_by_name(name)
-            .map(|vnd| Var::new0(vnd.space(), vnd.offset(), vnd.size() as u32 * 8))
-    }
-
-    /*
-    pub fn stack_space(&self) -> &AddressSpace {
-        self.translator().manager().space_by_id(self.stack_space)
-    }
-
-    pub fn stack_space_id(&self) -> AddressSpaceId {
-        self.stack_space
-    }
-    */
-
-    pub fn temporary_space(&self) -> &AddressSpace {
-        self.translator()
-            .manager()
-            .space_by_id(self.temporary_space)
+        self.language.register_by_name(name).map(|varnode| {
+            Var::new0(
+                self.language.space_id(varnode.space()),
+                varnode.offset(),
+                varnode.size() as u32 * 8,
+            )
+        })
     }
 
     pub fn temporary_space_id(&self) -> AddressSpaceId {
-        self.temporary_space
+        self.language.space_id(self.language.unique_space())
     }
 
-    pub fn translator(&self) -> &Translator {
-        &self.translator
-    }
-
-    pub fn translator_ref(&self) -> Arc<Translator> {
-        self.translator.clone()
-    }
-
-    pub fn translator_mut(&mut self) -> &mut Translator {
-        Arc::make_mut(&mut self.translator)
+    pub fn language(&self) -> &'static Language {
+        self.language
     }
 }
 
-#[self_referencing]
-struct DisassemblerInner<'a> {
+#[derive(Clone)]
+pub struct Disassembler<'a> {
     lifter: &'a Lifter,
-    irb: IRBuilderArena,
-    ctx: ContextDatabase,
-    #[borrows(irb)]
-    #[covariant]
-    pctx: ParserContext<'a, 'this>,
-}
-
-#[repr(transparent)]
-pub struct Disassembler<'a>(DisassemblerInner<'a>);
-
-impl<'a> Clone for Disassembler<'a> {
-    fn clone(&self) -> Self {
-        // we recreate based on the current context database
-        let lifter = *self.0.borrow_lifter();
-        let ctx = self.0.borrow_ctx().clone();
-
-        Self::new_with(lifter, ctx)
-    }
-
-    fn clone_from(&mut self, source: &Self) {
-        // we only need to copy the context database
-        let sctx = source.0.borrow_ctx().clone();
-        self.0.with_ctx_mut(|ctx| *ctx = sctx);
-    }
+    context: LiftingContext,
 }
 
 impl<'a> Disassembler<'a> {
     pub fn new(lifter: &'a Lifter) -> Self {
-        let ctx = lifter.context();
-        Self::new_with(lifter, ctx)
+        Self::new_with(lifter, lifter.context())
     }
 
-    pub fn new_with(lifter: &'a Lifter, ctx: ContextDatabase) -> Self {
-        let irb = lifter.irb(4096);
-
-        Self(DisassemblerInner::new(lifter, irb, ctx, |irb| {
-            ParserContext::empty(irb, lifter.translator().manager())
-        }))
+    pub fn new_with(lifter: &'a Lifter, context: ContextDatabase) -> Self {
+        Self {
+            lifter,
+            context: lifter.lifting_context_with(context),
+        }
     }
 
     pub fn disassemble(
         &mut self,
         address: impl Into<Address>,
         bytes: &[u8],
-    ) -> Result<InsnText, Error> {
-        self.0.with_mut(|slf| {
-            Insn::disassemble(slf.lifter, slf.irb, slf.ctx, slf.pctx, address, bytes)
-        })
+    ) -> Result<InsnText, LifterError> {
+        Insn::disassemble(self.lifter, &mut self.context, address, bytes)
     }
 
     pub fn disassemble_at(
         &mut self,
         address: impl Into<Address>,
         memory: &Memory,
-    ) -> Result<InsnText, Error> {
+    ) -> Result<InsnText, LifterError> {
         let address = address.into();
         let Ok(bytes) = memory.view_bytes_from(address) else {
-            return Err(Error::Disassembly(
-                fugue::ir::disassembly::Error::Invariant("unmapped address".into()),
-            ))?;
+            return Err(LifterError::UnmappedAddress(address));
         };
         self.disassemble(address, bytes)
-    }
-
-    pub fn reset(&mut self) {
-        let lifter = *self.0.borrow_lifter();
-        let mut ctx = lifter.context();
-
-        // we preserve the old context database
-        self.0.with_ctx_mut(|old_ctx| mem::swap(old_ctx, &mut ctx));
-
-        *self = Self::new_with(lifter, ctx);
-    }
-}
-
-pub trait TranslatorExt {
-    fn register_var(&self, name: &str) -> Option<Var>;
-}
-
-impl TranslatorExt for Translator {
-    fn register_var(&self, name: &str) -> Option<Var> {
-        self.register_by_name(name)
-            .map(|vnd| Var::new0(vnd.space(), vnd.offset(), vnd.size() as u32 * 8))
     }
 }

@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use bias_core::analyses::blocks::CodeBlockBounds;
 use bias_core::analyses::strings::StringsXRefDB;
+use bias_core::fugue::lifter::runtime::pcode::Varnode;
 use bias_core::prelude::*;
 
 use bias_core::decompiler::types::{
@@ -348,7 +349,7 @@ where
         */
 
         fields.add_field_method_get("architecture", |_lua, this| {
-            let architecture = this.project.lifter().translator().architecture();
+            let architecture = this.project.lifter().architecture();
             let arch = format!(
                 "{}:{}:{}",
                 architecture.processor(),
@@ -391,16 +392,24 @@ where
                 return Ok(None);
             };
 
-            let names = this.project.lifter().translator().registers();
+            let language = this.project.lifter().language();
             let lookup_name = |var: &Var| {
                 if !var.is_register() {
                     return None;
                 }
 
-                let nbytes = var.nbits() as usize / 8;
-                let offset = var.offset();
-
-                names.get(offset, nbytes).map(|name| name.to_owned())
+                let varnode = Varnode::new(
+                    language.register_space(),
+                    var.offset(),
+                    (var.nbits() / 8) as u16,
+                );
+                language
+                    .register_name(&varnode)
+                    .or_else(|| {
+                        let register = language.containing_register(&varnode)?;
+                        language.register_name(&register)
+                    })
+                    .map(|name| name.to_owned())
             };
 
             if let Some(term) = ud.borrow::<IRTerm>().ok() {

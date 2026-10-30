@@ -1,9 +1,9 @@
-use bias_core::fugue::ir::float_format::FloatFormat;
+use bias_core::fugue::sleigh::language::float_format::FloatFormat;
 use bias_core::prelude::*;
 
+use crate::lua::source::extract::c::language::LANGUAGE;
 use crate::lua::source::extract::languages::{Language, Node, TreeCursor};
 use crate::lua::source::extract::EntityExtractor;
-use crate::lua::source::extract::c::language::LANGUAGE;
 
 use smallvec::SmallVec;
 use ustr::Ustr;

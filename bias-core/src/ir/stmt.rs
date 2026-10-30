@@ -4,11 +4,9 @@ use std::fmt;
 
 use ahash::AHashMap as Map;
 use fugue::bv::BitVec;
-use fugue::ir::address::AddressValue;
-use fugue::ir::disassembly::lift::UserOpStr;
-use fugue::ir::disassembly::{ArenaVec, Opcode, VarnodeData};
-use fugue::ir::space::{AddressSpace, AddressSpaceId};
-use fugue::ir::space_manager::{FromSpace, IntoSpace, SpaceManager};
+use fugue::lifter::runtime::language::Language;
+use fugue::lifter::runtime::pcode::{Op, PCodeOp, Varnode};
+use fugue::sleigh::language::spaces::AddressSpaceId;
 use once_cell::sync::Lazy;
 use smallvec::SmallVec;
 use ustr::Ustr;
@@ -17,7 +15,7 @@ use crate::arch::Arch;
 use crate::ir::term::arena::Arena;
 use crate::ir::term::{Term, TermMut};
 use crate::ir::traits::*;
-use crate::ir::{BranchTarget, Expr, FloatKind, Location, ValHint, Var};
+use crate::ir::{Address, BranchTarget, Expr, FloatKind, Location, ValHint, Var};
 use crate::kb::AHashSet;
 
 thread_local! {
@@ -122,13 +120,16 @@ impl<'stmt, 'trans> fmt::Display for StmtFormatter<'stmt, 'trans> {
                 src.display_full(Cow::Borrowed(&*self.fmt))
             ),
             Stmt::Store(dest, src, size, spc) => {
-                if let Some(trans) = self.fmt.translator {
-                    let space = unsafe { trans.manager().unchecked_space_by_id(*spc) };
+                if let Some(space_name) = self
+                    .fmt
+                    .language
+                    .and_then(|language| language.space_name(spc.index() as u8))
+                {
                     write!(
                         f,
                         "{}{}{}[{}]:{}{}{} {}←{} {}",
                         self.fmt.variable_start,
-                        space.name(),
+                        space_name,
                         self.fmt.variable_end,
                         dest.display_full(Cow::Borrowed(&*self.fmt)),
                         self.fmt.value_start,
@@ -231,15 +232,15 @@ impl<'stmt, 'trans> fmt::Display for StmtFormatter<'stmt, 'trans> {
 
 pub struct StmtFormatter<'stmt, 'trans> {
     stmt: &'stmt Stmt,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
 }
 
-impl<'stmt, 'trans> TranslatorDisplay<'stmt, 'trans> for Stmt {
+impl<'stmt, 'trans> LanguageDisplay<'stmt, 'trans> for Stmt {
     type Target = StmtFormatter<'stmt, 'trans>;
 
     fn display_full(
         &'stmt self,
-        fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+        fmt: Cow<'trans, LanguageFormatter<'trans>>,
     ) -> StmtFormatter<'stmt, 'trans> {
         StmtFormatter { stmt: self, fmt }
     }
@@ -248,29 +249,23 @@ impl<'stmt, 'trans> TranslatorDisplay<'stmt, 'trans> for Stmt {
 pub type StmtCache = Map<Term<Stmt>, ()>;
 
 impl Stmt {
-    pub fn from_parts_with<'a>(
-        manager: &SpaceManager,
-        float_formats: &Map<u32, FloatKind>,
-        user_ops: &[UserOpStr],
-        address: &AddressValue,
-        position: usize,
-        opcode: Opcode,
-        inputs: ArenaVec<'a, VarnodeData>,
-        output: Option<VarnodeData>,
-        cached: &mut Map<Term<Self>, ()>,
-    ) -> Term<Self> {
-        let stmt = Self::from_parts(
-            manager,
-            float_formats,
-            user_ops,
-            address,
-            position,
-            opcode,
-            inputs,
-            output,
-        );
+    pub fn from_pcode<'a>(
+        language: &'static Language,
+        float_formats: &'a Map<u32, FloatKind>,
+        address: Address,
+        operations: &'a [PCodeOp],
+    ) -> impl Iterator<Item = Term<Self>> + 'a {
+        operations
+            .iter()
+            .enumerate()
+            .filter(|(_, operation)| !operation.is_arg())
+            .map(move |(index, _)| {
+                Self::from_pcode_op(language, float_formats, address, operations, index)
+            })
+    }
 
-        match cached.entry(stmt) {
+    pub(crate) fn interned(stmt: Term<Self>, cache: &mut StmtCache) -> Term<Self> {
+        match cache.entry(stmt) {
             Entry::Vacant(v) => {
                 let k = v.key().to_owned();
                 v.insert(());
@@ -280,125 +275,117 @@ impl Stmt {
         }
     }
 
-    #[inline]
-    pub fn from_parts<'a>(
-        manager: &SpaceManager,
+    fn from_pcode_op(
+        language: &'static Language,
         float_formats: &Map<u32, FloatKind>,
-        user_ops: &[UserOpStr],
-        address: &AddressValue,
-        position: usize,
-        opcode: Opcode,
-        inputs: ArenaVec<'a, VarnodeData>,
-        output: Option<VarnodeData>,
+        address: Address,
+        operations: &[PCodeOp],
+        index: usize,
     ) -> Term<Self> {
-        let mut inputs = inputs.into_iter();
-        let spaces = manager.spaces();
-        match opcode {
-            Opcode::Copy => Self::assign(
-                output.unwrap(),
-                Expr::from_space(inputs.next().unwrap(), manager),
+        let operation = &operations[index];
+        let inputs = operation.inputs();
+
+        let input = |n: usize| Expr::from_varnode(language, &inputs[n]);
+        let output = || {
+            Var::from_varnode(
+                language,
+                operation.output().expect("p-code operation has an output"),
+            )
+        };
+
+        match operation.op() {
+            Op::Copy => Self::assign(output(), input(0)),
+            Op::Load(space) => {
+                let output = output();
+                let source = Term::from(input(0));
+                let word_size = language
+                    .space_word_size(space)
+                    .expect("load space is defined by the language");
+
+                let source = if word_size > 1 {
+                    let bits = source.nbits();
+                    let w = Expr::from(BitVec::from_usize(word_size, bits));
+                    Expr::int_mul(source, w)
+                } else {
+                    source
+                };
+
+                let size = output.nbits();
+                Self::assign(
+                    output,
+                    Expr::load(
+                        source,
+                        size,
+                        language.space_id(space),
+                        space_address_bits(language, space),
+                    ),
+                )
+            }
+            Op::Store(space) => {
+                let destination = Term::from(input(0));
+                let size = inputs[1].size() as u32 * 8;
+                let word_size = language
+                    .space_word_size(space)
+                    .expect("store space is defined by the language");
+
+                let destination = if word_size > 1 {
+                    let bits = destination.nbits();
+                    let w = Expr::from(BitVec::from_usize(word_size, bits));
+                    Expr::int_mul(destination, w)
+                } else {
+                    destination
+                };
+
+                Self::store(
+                    destination,
+                    input(1),
+                    size,
+                    language.space_id(space),
+                    space_address_bits(language, space),
+                )
+            }
+            Op::Branch => Self::branch(branch_location(
+                language, address, operations, index, &inputs[0],
+            )),
+            Op::CBranch => Self::branch_conditional(
+                input(1),
+                branch_location(language, address, operations, index, &inputs[0]),
             ),
-            Opcode::Load => {
-                let space = &spaces[inputs.next().unwrap().offset() as usize];
-                let destination = output.unwrap();
-                let source: Expr = inputs.next().unwrap().into_space(manager);
-                let s: Term<Expr> = source.into();
-                let size = destination.size() * 8;
+            Op::IBranch => Self::branch_indirect(input(0)),
+            Op::Call => Self::call(branch_location(
+                language, address, operations, index, &inputs[0],
+            )),
+            Op::ICall => Self::call_indirect(input(0)),
+            Op::UserOp(id, _) => {
+                let name = language
+                    .user_op_by_id(id)
+                    .expect("user-op is defined by the language");
+                let spilled = &operations[index + 1..index + 1 + operation.spill()];
+                let arguments = inputs
+                    .iter()
+                    .chain(spilled.iter().flat_map(PCodeOp::inputs))
+                    .map(|varnode| Expr::from_varnode(language, varnode))
+                    .collect::<SmallVec<[Expr; 4]>>();
 
-                let src = if space.word_size() > 1 {
-                    let bits = s.nbits();
-
-                    let w = Expr::from(BitVec::from_usize(space.word_size(), bits as usize));
-
-                    Expr::int_mul(s, w)
-                } else {
-                    s
-                };
-
-                Self::assign(destination, Expr::load(src, size as u32, space))
-            }
-            Opcode::Store => {
-                let space = &spaces[inputs.next().unwrap().offset() as usize];
-                let destination: Expr = inputs.next().unwrap().into_space(manager);
-                let d: Term<Expr> = destination.into();
-                let source = inputs.next().unwrap();
-                let size = source.size() as u32 * 8;
-
-                let dest = if space.word_size() > 1 {
-                    let bits = d.nbits();
-
-                    let w = Expr::from(BitVec::from_usize(space.word_size(), bits as usize));
-
-                    Expr::int_mul(d, w)
-                } else {
-                    d
-                };
-
-                Self::store(dest, Expr::from_space(source, manager), size, space)
-            }
-            Opcode::Branch => {
-                let target = Location::absolute_from(address, inputs.next().unwrap(), position);
-                Self::branch(target)
-            }
-            Opcode::CBranch => {
-                let target = Location::absolute_from(address, inputs.next().unwrap(), position);
-                let condition = Expr::from_space(inputs.next().unwrap(), manager);
-
-                Self::branch_conditional(condition, target)
-            }
-            Opcode::IBranch => {
-                let target = Expr::from_space(inputs.next().unwrap(), manager);
-                let space = unsafe { manager.unchecked_space_by_id(address.space()) };
-
-                Self::branch_indirect(target, space)
-            }
-            Opcode::Call => {
-                let target = Location::absolute_from(address, inputs.next().unwrap(), position);
-                Self::call(target)
-            }
-            Opcode::ICall => {
-                let target = Expr::from_space(inputs.next().unwrap(), manager);
-
-                Self::call_indirect(target)
-            }
-            Opcode::CallOther => {
-                let name = Ustr::from(&user_ops[inputs.next().unwrap().offset() as usize]);
-                if let Some(output) = output {
-                    let output = Var::from(output);
+                if operation.output().is_some() {
+                    let output = output();
                     let bits = output.nbits();
-                    Self::assign(
-                        output,
-                        Expr::intrinsic(
-                            &*name,
-                            inputs.into_iter().map(|v| Expr::from_space(v, manager)),
-                            bits,
-                        ),
-                    )
+                    Self::assign(output, Expr::intrinsic(name, arguments.into_iter(), bits))
+                } else if name == POINTER_HINT.as_str() {
+                    Self::PointerHint(Var::from_varnode(language, &inputs[0])).into()
                 } else {
-                    if name == *POINTER_HINT {
-                        Self::PointerHint(Var::from(inputs.next().unwrap())).into()
-                    } else {
-                        Self::intrinsic(
-                            &*name,
-                            inputs.into_iter().map(|v| Expr::from_space(v, manager)),
-                        )
-                    }
+                    Self::intrinsic(name, arguments.into_iter())
                 }
             }
-            Opcode::Return => {
-                let target = Expr::from_space(inputs.next().unwrap(), manager);
-                let space = unsafe { manager.unchecked_space_by_id(address.space()) };
-
-                Self::return_(target, space)
-            }
-            Opcode::Subpiece => {
-                let source = Expr::from_space(inputs.next().unwrap(), manager);
+            Op::Return => Self::return_(input(0)),
+            Op::Subpiece => {
+                let source = input(0);
                 let src_size = source.nbits();
 
-                let output = output.unwrap();
-                let out_size = output.size() as u32 * 8;
+                let output = output();
+                let out_size = output.nbits();
 
-                let loff = inputs.next().unwrap().offset() as u32 * 8;
+                let loff = inputs[1].offset() as u32 * 8;
                 let trun_size = src_size.checked_sub(loff).unwrap_or(0);
 
                 let trun = if out_size > trun_size {
@@ -413,325 +400,103 @@ impl Stmt {
 
                 Self::assign(output, trun)
             }
-            Opcode::PopCount => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = Var::from(output.unwrap());
-
+            Op::CountOnes => {
+                let output = output();
                 let size = output.nbits();
-                let popcount = Expr::count_ones(input, size);
-
-                Self::assign(output, popcount)
+                Self::assign(output, Expr::count_ones(input(0), size))
             }
-            Opcode::BoolNot => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
+            Op::CountLeadingZeros => {
+                let input = Term::from(input(0));
+                let bits = input.nbits();
 
-                Self::assign(output, Expr::bool_not(input))
-            }
-            Opcode::BoolAnd => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
+                let mut smeared = input;
+                let mut shift = 1;
+                while shift < bits {
+                    let amount = Expr::from(BitVec::from_u32(shift, bits));
+                    smeared = Expr::int_or(smeared.clone(), Expr::int_shr(smeared, amount));
+                    shift <<= 1;
+                }
 
-                Self::assign(output, Expr::bool_and(input1, input2))
+                let output = output();
+                let size = output.nbits();
+                Self::assign(output, Expr::count_ones(Expr::int_not(smeared), size))
             }
-            Opcode::BoolOr => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::bool_or(input1, input2))
+            Op::BoolNot => Self::assign(output(), Expr::bool_not(input(0))),
+            Op::BoolAnd => Self::assign(output(), Expr::bool_and(input(0), input(1))),
+            Op::BoolOr => Self::assign(output(), Expr::bool_or(input(0), input(1))),
+            Op::BoolXor => Self::assign(output(), Expr::bool_xor(input(0), input(1))),
+            Op::IntNeg => Self::assign(output(), Expr::int_neg(input(0))),
+            Op::IntNot => Self::assign(output(), Expr::int_not(input(0))),
+            Op::SignExt => {
+                let output = output();
+                let size = output.nbits();
+                Self::assign(output, Expr::cast_signed(input(0), size))
             }
-            Opcode::BoolXor => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::bool_xor(input1, input2))
+            Op::ZeroExt => {
+                let output = output();
+                let size = output.nbits();
+                Self::assign(output, Expr::cast_unsigned(input(0), size))
             }
-            Opcode::IntNeg => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_neg(input))
+            Op::IntEq => Self::assign(output(), Expr::int_eq(input(0), input(1))),
+            Op::IntNotEq => Self::assign(output(), Expr::int_neq(input(0), input(1))),
+            Op::IntLess => Self::assign(output(), Expr::int_lt(input(0), input(1))),
+            Op::IntLessEq => Self::assign(output(), Expr::int_le(input(0), input(1))),
+            Op::IntSignedLess => Self::assign(output(), Expr::int_slt(input(0), input(1))),
+            Op::IntSignedLessEq => Self::assign(output(), Expr::int_sle(input(0), input(1))),
+            Op::IntCarry => Self::assign(output(), Expr::int_carry(input(0), input(1))),
+            Op::IntSignedCarry => Self::assign(output(), Expr::int_scarry(input(0), input(1))),
+            Op::IntSignedBorrow => Self::assign(output(), Expr::int_sborrow(input(0), input(1))),
+            Op::IntAdd => Self::assign(output(), Expr::int_add(input(0), input(1))),
+            Op::IntSub => Self::assign(output(), Expr::int_sub(input(0), input(1))),
+            Op::IntDiv => Self::assign(output(), Expr::int_div(input(0), input(1))),
+            Op::IntSignedDiv => Self::assign(output(), Expr::int_sdiv(input(0), input(1))),
+            Op::IntMul => Self::assign(output(), Expr::int_mul(input(0), input(1))),
+            Op::IntRem => Self::assign(output(), Expr::int_rem(input(0), input(1))),
+            Op::IntSignedRem => Self::assign(output(), Expr::int_srem(input(0), input(1))),
+            Op::IntLeftShift => Self::assign(output(), Expr::int_shl(input(0), input(1))),
+            Op::IntRightShift => Self::assign(output(), Expr::int_shr(input(0), input(1))),
+            Op::IntSignedRightShift => Self::assign(output(), Expr::int_sar(input(0), input(1))),
+            Op::IntAnd => Self::assign(output(), Expr::int_and(input(0), input(1))),
+            Op::IntOr => Self::assign(output(), Expr::int_or(input(0), input(1))),
+            Op::IntXor => Self::assign(output(), Expr::int_xor(input(0), input(1))),
+            Op::FloatIsNaN => Self::assign(output(), Expr::float_nan(input(0), float_formats)),
+            Op::FloatAbs => Self::assign(output(), Expr::float_abs(input(0), float_formats)),
+            Op::FloatNeg => Self::assign(output(), Expr::float_neg(input(0), float_formats)),
+            Op::FloatSqrt => Self::assign(output(), Expr::float_sqrt(input(0), float_formats)),
+            Op::FloatFloor => Self::assign(output(), Expr::float_floor(input(0), float_formats)),
+            Op::FloatCeiling => {
+                Self::assign(output(), Expr::float_ceiling(input(0), float_formats))
             }
-            Opcode::IntNot => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_not(input))
+            Op::FloatRound => Self::assign(output(), Expr::float_round(input(0), float_formats)),
+            Op::FloatEq => {
+                Self::assign(output(), Expr::float_eq(input(0), input(1), float_formats))
             }
-            Opcode::IntSExt => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-                let size = output.size() as u32 * 8;
-
-                Self::assign(output, Expr::cast_signed(input, size))
+            Op::FloatNotEq => {
+                Self::assign(output(), Expr::float_neq(input(0), input(1), float_formats))
             }
-            Opcode::IntZExt => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-                let size = output.size() as u32 * 8;
-
-                Self::assign(output, Expr::cast_unsigned(input, size))
+            Op::FloatLess => {
+                Self::assign(output(), Expr::float_lt(input(0), input(1), float_formats))
             }
-            Opcode::IntEq => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_eq(input1, input2))
+            Op::FloatLessEq => {
+                Self::assign(output(), Expr::float_le(input(0), input(1), float_formats))
             }
-            Opcode::IntNotEq => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_neq(input1, input2))
+            Op::FloatAdd => {
+                Self::assign(output(), Expr::float_add(input(0), input(1), float_formats))
             }
-            Opcode::IntLess => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_lt(input1, input2))
+            Op::FloatSub => {
+                Self::assign(output(), Expr::float_sub(input(0), input(1), float_formats))
             }
-            Opcode::IntLessEq => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_le(input1, input2))
+            Op::FloatDiv => {
+                Self::assign(output(), Expr::float_div(input(0), input(1), float_formats))
             }
-            Opcode::IntSLess => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_slt(input1, input2))
+            Op::FloatMul => {
+                Self::assign(output(), Expr::float_mul(input(0), input(1), float_formats))
             }
-            Opcode::IntSLessEq => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_sle(input1, input2))
-            }
-            Opcode::IntCarry => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_carry(input1, input2))
-            }
-            Opcode::IntSCarry => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_scarry(input1, input2))
-            }
-            Opcode::IntSBorrow => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_sborrow(input1, input2))
-            }
-            Opcode::IntAdd => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_add(input1, input2))
-            }
-            Opcode::IntSub => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_sub(input1, input2))
-            }
-            Opcode::IntDiv => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_div(input1, input2))
-            }
-            Opcode::IntSDiv => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_sdiv(input1, input2))
-            }
-            Opcode::IntMul => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_mul(input1, input2))
-            }
-            Opcode::IntRem => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_rem(input1, input2))
-            }
-            Opcode::IntSRem => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_srem(input1, input2))
-            }
-            Opcode::IntLShift => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_shl(input1, input2))
-            }
-            Opcode::IntRShift => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_shr(input1, input2))
-            }
-            Opcode::IntSRShift => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_sar(input1, input2))
-            }
-            Opcode::IntAnd => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_and(input1, input2))
-            }
-            Opcode::IntOr => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_or(input1, input2))
-            }
-            Opcode::IntXor => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::int_xor(input1, input2))
-            }
-            Opcode::FloatIsNaN => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_nan(input, float_formats))
-            }
-            Opcode::FloatAbs => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_abs(input, float_formats))
-            }
-            Opcode::FloatNeg => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_neg(input, float_formats))
-            }
-            Opcode::FloatSqrt => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_sqrt(input, float_formats))
-            }
-            Opcode::FloatFloor => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_floor(input, float_formats))
-            }
-            Opcode::FloatCeiling => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_ceiling(input, float_formats))
-            }
-            Opcode::FloatRound => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_round(input, float_formats))
-            }
-            Opcode::FloatEq => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_eq(input1, input2, float_formats))
-            }
-            Opcode::FloatNotEq => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_neq(input1, input2, float_formats))
-            }
-            Opcode::FloatLess => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_lt(input1, input2, float_formats))
-            }
-            Opcode::FloatLessEq => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_le(input1, input2, float_formats))
-            }
-            Opcode::FloatAdd => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_add(input1, input2, float_formats))
-            }
-            Opcode::FloatSub => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_sub(input1, input2, float_formats))
-            }
-            Opcode::FloatDiv => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_div(input1, input2, float_formats))
-            }
-            Opcode::FloatMul => {
-                let input1 = Expr::from_space(inputs.next().unwrap(), manager);
-                let input2 = Expr::from_space(inputs.next().unwrap(), manager);
-                let output = output.unwrap();
-
-                Self::assign(output, Expr::float_mul(input1, input2, float_formats))
-            }
-            Opcode::FloatOfFloat => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
+            Op::FloatToFloat => {
+                let input = input(0);
                 let input_size = input.nbits();
 
-                let output = Var::from(output.unwrap());
+                let output = output();
                 let output_size = output.nbits();
 
                 let input_format = float_formats[&input_size].clone();
@@ -742,11 +507,11 @@ impl Stmt {
                     Expr::cast_float(Expr::cast_float(input, input_format), output_format),
                 )
             }
-            Opcode::FloatOfInt => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
+            Op::IntToFloat => {
+                let input = input(0);
                 let input_size = input.nbits();
 
-                let output = Var::from(output.unwrap());
+                let output = output();
                 let output_size = output.nbits();
 
                 let format = float_formats[&output_size].clone();
@@ -755,11 +520,11 @@ impl Stmt {
                     Expr::cast_float(Expr::cast_signed(input, input_size), format),
                 )
             }
-            Opcode::FloatTruncate => {
-                let input = Expr::from_space(inputs.next().unwrap(), manager);
+            Op::FloatToInt => {
+                let input = input(0);
                 let input_size = input.nbits();
 
-                let output = Var::from(output.unwrap());
+                let output = output();
                 let output_size = output.nbits();
 
                 let format = float_formats[&input_size].clone();
@@ -768,21 +533,47 @@ impl Stmt {
                     Expr::cast_signed(Expr::cast_float(input, format), output_size),
                 )
             }
-            Opcode::Label => Self::skip(),
-            Opcode::Build
-            | Opcode::CrossBuild
-            | Opcode::CPoolRef
-            | Opcode::Piece
-            | Opcode::Extract
-            | Opcode::DelaySlot
-            | Opcode::New
-            | Opcode::Insert
-            | Opcode::Cast
-            | Opcode::SegmentOp => {
-                panic!("unimplemented due to spec.")
-            }
+            Op::Arg => unreachable!("spilled user-op arguments are lowered with their user-op"),
         }
     }
+}
+
+fn branch_location(
+    language: &Language,
+    address: Address,
+    operations: &[PCodeOp],
+    index: usize,
+    target: &Varnode,
+) -> Location {
+    if !language.in_constant_space(target) {
+        return Location::new(target.offset(), 0);
+    }
+
+    let shift = u64::BITS.saturating_sub(target.size() as u32 * 8);
+    let offset = ((target.offset() << shift) as i64) >> shift;
+
+    let position = index
+        .checked_add_signed(offset as isize)
+        .and_then(|target| {
+            let spilled = operations
+                .get(..target)?
+                .iter()
+                .filter(|operation| operation.is_arg());
+            Some(target - spilled.count())
+        })
+        .expect("relative branch target within instruction");
+
+    Location::new(address, position)
+}
+
+fn space_address_bits(language: &Language, space: u8) -> u32 {
+    let highest = language
+        .space_upper_bound(space)
+        .expect("space is defined by the language");
+    let word_size = language
+        .space_word_size(space)
+        .expect("space is defined by the language") as u64;
+    (u64::BITS - (highest / word_size).leading_zeros()).div_ceil(8) * 8
 }
 
 impl Stmt {
@@ -796,16 +587,22 @@ impl Stmt {
         Self::Assign(dest, Expr::cast_unsigned(source, bits)).into()
     }
 
-    pub fn store<D, S>(destination: D, source: S, size: u32, space: &AddressSpace) -> Term<Self>
+    pub fn store<D, S>(
+        destination: D,
+        source: S,
+        size: u32,
+        space: AddressSpaceId,
+        address_bits: u32,
+    ) -> Term<Self>
     where
         D: Into<Term<Expr>>,
         S: Into<Term<Expr>>,
     {
         Self::Store(
-            Expr::cast_unsigned(destination.into(), space.address_size() as u32 * 8),
+            Expr::cast_unsigned(destination.into(), address_bits),
             source.into(),
             size,
-            space.id(),
+            space,
         )
         .into()
     }
@@ -825,7 +622,7 @@ impl Stmt {
         Self::CBranch(Expr::cast_bool(condition), target.into()).into()
     }
 
-    pub fn branch_indirect<T>(target: T, _space: &AddressSpace) -> Term<Self>
+    pub fn branch_indirect<T>(target: T) -> Term<Self>
     where
         T: Into<Term<Expr>>,
     {
@@ -885,7 +682,7 @@ impl Stmt {
         Self::Call(BranchTarget::computed(target.into()), args).into()
     }
 
-    pub fn return_<T>(target: T, _space: &AddressSpace) -> Term<Self>
+    pub fn return_<T>(target: T) -> Term<Self>
     where
         T: Into<Term<Expr>>,
     {

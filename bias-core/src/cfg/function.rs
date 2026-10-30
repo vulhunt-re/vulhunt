@@ -1,5 +1,4 @@
-use fugue::ir::Address;
-
+use crate::ir::Address;
 use crate::kb::function::FunctionInfo;
 use crate::kb::AHashMap;
 

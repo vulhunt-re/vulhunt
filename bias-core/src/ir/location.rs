@@ -2,9 +2,8 @@ use std::borrow::Cow;
 use std::fmt;
 use std::ops::Add;
 
-use fugue::ir::{Address, AddressValue, VarnodeData};
-
 use crate::ir::traits::*;
+use crate::ir::Address;
 
 #[derive(
     Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Deserialize, serde::Serialize,
@@ -28,13 +27,13 @@ impl fmt::Display for Location {
 
 pub struct LocationFormatter<'loc, 'trans> {
     loc: &'loc Location,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
 }
 
-impl<'loc, 'trans> TranslatorDisplay<'loc, 'trans> for Location {
+impl<'loc, 'trans> LanguageDisplay<'loc, 'trans> for Location {
     type Target = LocationFormatter<'loc, 'trans>;
 
-    fn display_full(&'loc self, fmt: Cow<'trans, TranslatorFormatter<'trans>>) -> Self::Target {
+    fn display_full(&'loc self, fmt: Cow<'trans, LanguageFormatter<'trans>>) -> Self::Target {
         LocationFormatter { loc: self, fmt }
     }
 }
@@ -77,32 +76,6 @@ impl Location {
 
     pub fn position(&self) -> usize {
         self.position
-    }
-
-    pub(super) fn absolute_from(
-        base_address: &AddressValue,
-        address: VarnodeData,
-        position: usize,
-    ) -> Self {
-        if !address.space().is_constant() {
-            return Self::new(address.offset(), 0); // position);
-        }
-
-        let offset = address.offset() as i64;
-        let position = if offset.is_negative() {
-            position
-                .checked_sub(offset.abs() as usize)
-                .expect("negative offset from position in valid range")
-        } else {
-            position
-                .checked_add(offset as usize)
-                .expect("positive offset from position in valid range")
-        };
-
-        Self {
-            address: base_address.into(),
-            position,
-        }
     }
 }
 

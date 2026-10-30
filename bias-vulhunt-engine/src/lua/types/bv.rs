@@ -39,7 +39,7 @@ impl BitVec {
 
     fn lift_cmp<F>(&self, rhs: &Self, f: F) -> bool
     where
-        F: FnOnce(&BitVecT, &BitVecT) -> bool,
+        F: FnOnce(Ordering) -> bool,
     {
         if self.0.is_signed() || rhs.0.is_signed() {
             self.lift_signed2_cmp(rhs, f)
@@ -50,21 +50,15 @@ impl BitVec {
 
     fn lift_signed2_cmp<F>(&self, rhs: &Self, f: F) -> bool
     where
-        F: FnOnce(&BitVecT, &BitVecT) -> bool,
+        F: FnOnce(Ordering) -> bool,
     {
         let lbits = self.0.bits();
         let rbits = rhs.0.bits();
-        match lbits.cmp(&rbits) {
-            Ordering::Less => f(
-                &self.0.clone().signed().cast(rbits),
-                &rhs.0.clone().signed(),
-            ),
-            Ordering::Greater => f(
-                &self.0.clone().signed(),
-                &rhs.0.clone().signed().cast(lbits),
-            ),
-            Ordering::Equal => f(&self.0.clone().signed(), &rhs.0.clone().signed()),
-        }
+        f(match lbits.cmp(&rbits) {
+            Ordering::Less => self.0.signed_cast(rbits).signed_cmp(&rhs.0),
+            Ordering::Greater => self.0.signed_cmp(&rhs.0.signed_cast(lbits)),
+            Ordering::Equal => self.0.signed_cmp(&rhs.0),
+        })
     }
 
     fn lift_signed2<F>(&self, rhs: &Self, f: F) -> Self
@@ -82,15 +76,15 @@ impl BitVec {
 
     fn lift_unsigned2_cmp<F>(&self, rhs: &Self, f: F) -> bool
     where
-        F: FnOnce(&BitVecT, &BitVecT) -> bool,
+        F: FnOnce(Ordering) -> bool,
     {
         let lbits = self.0.bits();
         let rbits = rhs.0.bits();
-        match lbits.cmp(&rbits) {
-            Ordering::Less => f(&(self.0.clone()).cast(rbits), &rhs.0),
-            Ordering::Greater => f(&self.0, &(rhs.0.clone()).cast(lbits)),
-            Ordering::Equal => f(&self.0, &rhs.0),
-        }
+        f(match lbits.cmp(&rbits) {
+            Ordering::Less => self.0.clone().cast(rbits).cmp(&rhs.0),
+            Ordering::Greater => self.0.cmp(&rhs.0.clone().cast(lbits)),
+            Ordering::Equal => self.0.cmp(&rhs.0),
+        })
     }
 
     fn lift_unsigned2<F>(&self, rhs: &Self, f: F) -> Self
@@ -116,7 +110,7 @@ fn ensure_valid_bits(bits: u32) -> LuaResult<()> {
     Ok(())
 }
 
-fn ensure_min_size(bv: &BitVecT, min: usize) -> LuaResult<()> {
+fn ensure_min_size(bv: &BitVecT, min: u32) -> LuaResult<()> {
     if bv.bits() >= min {
         Ok(())
     } else {
@@ -277,16 +271,16 @@ impl LuaUserData for BitVec {
                 ));
             }
 
-            if moff as usize > this.0.bits() {
+            if moff > this.0.bits() {
                 return Err(LuaError::RuntimeError(
                     "invalid extract range: moff exceeds bit-vector size".into(),
                 ));
             }
 
             let nval = if loff > 0 {
-                (&this.0 >> loff).unsigned_cast((moff - loff) as usize)
+                (&this.0 >> loff).unsigned_cast(moff - loff)
             } else {
-                this.0.clone().unsigned_cast((moff - loff) as usize)
+                this.0.clone().unsigned_cast(moff - loff)
             };
 
             Ok(Self(nval))
@@ -317,12 +311,12 @@ impl LuaUserData for BitVec {
             })
         });
         methods.add_method("to_i64", |_, this, ()| {
-            let bv = if this.0.is_signed() && this.0.bits() < 64 {
-                this.0.signed_cast(64)
+            let value = if this.0.is_signed() && this.0.bits() < 64 {
+                this.0.signed_cast(64).to_u64()
             } else {
-                this.0.clone()
+                this.0.to_u64()
             };
-            bv.to_i64().ok_or_else(|| {
+            value.map(|v| v as i64).ok_or_else(|| {
                 LuaError::RuntimeError("bit-vector too large to convert to i64".into())
             })
         });
@@ -332,28 +326,28 @@ impl LuaUserData for BitVec {
             })
         });
         methods.add_method("to_i32", |_, this, ()| {
-            let bv = if this.0.is_signed() && this.0.bits() < 32 {
-                this.0.signed_cast(32)
+            let value = if this.0.is_signed() && this.0.bits() < 32 {
+                this.0.signed_cast(32).to_u32()
             } else {
-                this.0.clone()
+                this.0.to_u32()
             };
-            bv.to_i32().ok_or_else(|| {
+            value.map(|v| v as i32).ok_or_else(|| {
                 LuaError::RuntimeError("bit-vector too large to convert to i32".into())
             })
         });
 
         methods.add_method("to_be_bytes", |_, this, ()| {
-            let mut bytes = vec![0u8; (this.0.bits() + 7) / 8];
+            let mut bytes = vec![0u8; this.0.bits().div_ceil(8) as usize];
             this.0.to_be_bytes(&mut bytes);
             Ok(bytes)
         });
         methods.add_method("to_le_bytes", |_, this, ()| {
-            let mut bytes = vec![0u8; (this.0.bits() + 7) / 8];
+            let mut bytes = vec![0u8; this.0.bits().div_ceil(8) as usize];
             this.0.to_le_bytes(&mut bytes);
             Ok(bytes)
         });
         methods.add_method("to_bytes", |_, this, ()| {
-            let mut bytes = vec![0u8; (this.0.bits() + 7) / 8];
+            let mut bytes = vec![0u8; this.0.bits().div_ceil(8) as usize];
             this.0.to_ne_bytes(&mut bytes);
             Ok(bytes)
         });
@@ -416,7 +410,7 @@ impl LuaUserData for BitVec {
             LuaValue::Integer(i) => {
                 let bits = if let Some(&bits) = args.1.first() {
                     ensure_valid_bits(bits)?;
-                    bits as usize
+                    bits
                 } else {
                     return Err(LuaError::RuntimeError(
                         "bit size must be specified when constructing BitVec from an integer"
@@ -441,7 +435,7 @@ impl LuaUserData for BitVec {
                 if let Ok(av) = ud.borrow::<AddressValue>() {
                     let bits = if let Some(&bits) = args.1.first() {
                         ensure_valid_bits(bits)?;
-                        bits as usize
+                        bits
                     } else {
                         return Err(LuaError::RuntimeError(
                             "bit size must be specified when constructing BitVec from an Address"
@@ -449,14 +443,14 @@ impl LuaUserData for BitVec {
                         ));
                     };
 
-                    return Ok(Self(BitVecT::from_u64(av.value(), bits as _)));
+                    return Ok(Self(BitVecT::from_u64(av.value(), bits)));
                 }
 
                 if let Ok(bv) = ud.borrow::<BitVec>() {
                     let mut nbv = bv.0.clone();
                     if let Some(&bits) = args.1.first() {
                         ensure_valid_bits(bits)?;
-                        nbv.cast_assign(bits as _);
+                        nbv.cast_assign(bits);
                     };
 
                     return Ok(Self(nbv));
@@ -469,7 +463,7 @@ impl LuaUserData for BitVec {
             LuaValue::Number(n) => {
                 let bits = if let Some(&bits) = args.1.first() {
                     ensure_valid_bits(bits)?;
-                    bits as usize
+                    bits
                 } else {
                     return Err(LuaError::RuntimeError(
                         "bit size must be specified when constructing BitVec from a number".into(),
@@ -512,13 +506,13 @@ impl LuaUserData for BitVec {
         });
 
         methods.add_meta_method(LuaMetaMethod::Eq, |_, this, other: BitVec| {
-            Ok(this.lift_cmp(&other, |l, r| l == r))
+            Ok(this.lift_cmp(&other, Ordering::is_eq))
         });
         methods.add_meta_method(LuaMetaMethod::Lt, |_, this, other: BitVec| {
-            Ok(this.lift_cmp(&other, |l, r| l < r))
+            Ok(this.lift_cmp(&other, Ordering::is_lt))
         });
         methods.add_meta_method(LuaMetaMethod::Le, |_, this, other: BitVec| {
-            Ok(this.lift_cmp(&other, |l, r| l <= r))
+            Ok(this.lift_cmp(&other, Ordering::is_le))
         });
 
         methods.add_meta_method(LuaMetaMethod::Concat, |_, this, other: BitVec| {
@@ -528,7 +522,7 @@ impl LuaUserData for BitVec {
         });
 
         methods.add_meta_method(LuaMetaMethod::Index, |_, this, index: u32| {
-            ensure_min_size(&this.0, (index + 1) as usize)?;
+            ensure_min_size(&this.0, index + 1)?;
             Ok(this.0.bit(index))
         });
         methods.add_meta_method(LuaMetaMethod::Len, |_, this, ()| Ok(this.0.bits()));

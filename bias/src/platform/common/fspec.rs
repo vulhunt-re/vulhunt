@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
 
-use bias_core::fugue::fspec::{FunctionSpecError, FunctionSpecs};
+use bias_core::fugue::specs::{FunctionSpecError, FunctionSpecs};
 use thiserror::Error;
 
 use super::data::{PlatformDataProvider, PlatformDataProviderError};

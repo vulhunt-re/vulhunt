@@ -3,7 +3,7 @@
 use downcast_rs::{impl_downcast, DowncastSync};
 use dyn_clone::{clone_trait_object, DynClone};
 use fugue::bv::BitVec;
-use fugue::ir::{Address, AddressSpaceId};
+use fugue::sleigh::language::spaces::AddressSpaceId;
 use smallvec::{smallvec, SmallVec};
 use ustr::Ustr;
 
@@ -13,7 +13,8 @@ use crate::ir::stmt::POINTER_HINT;
 use crate::ir::traits::BitSize;
 use crate::ir::types::{EnumVariant, FunctionArg, StructField, UnionVariant};
 use crate::ir::{
-    BinOp, BinRel, BranchTarget, Expr, Insn, Location, Stmt, Type, TypeKind, UnOp, UnRel, Var,
+    Address, BinOp, BinRel, BranchTarget, Expr, Insn, Location, Stmt, Type, TypeKind, UnOp, UnRel,
+    Var,
 };
 use crate::kb::block::CodeBlock;
 use crate::kb::phi::Phi;

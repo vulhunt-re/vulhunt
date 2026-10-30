@@ -1,17 +1,17 @@
-use std::borrow::{Borrow, Cow};
+use std::borrow::Cow;
 use std::fmt;
 use std::hash::Hash;
 use std::ops::{Deref, Range};
 
 use ahash::AHashMap;
-use fugue::ir::disassembly::IRBuilderArena;
-use fugue::ir::il::pcode::Operand;
-use fugue::ir::space_manager::{FromSpace, SpaceManager};
-use fugue::ir::{Address, AddressSpaceId, Translator, VarnodeData};
+use fugue::lifter::runtime::language::Language;
+use fugue::lifter::runtime::pcode::Varnode;
+use fugue::sleigh::language::spaces::AddressSpaceId;
 use iset::IntervalSet;
 
 use super::Insn;
 use crate::ir::traits::*;
+use crate::ir::Address;
 use crate::kb::block::CodeBlock;
 use crate::kb::function::Function;
 use crate::kb::table::MPointTable;
@@ -57,6 +57,14 @@ impl Var {
         }
     }
 
+    pub fn from_varnode(language: &Language, varnode: &Varnode) -> Self {
+        Self::from_parts0(
+            language.space_id(varnode.space()),
+            varnode.offset(),
+            varnode.size() as u32 * 8,
+        )
+    }
+
     #[inline]
     pub const fn from_parts0(space: AddressSpaceId, offset: u64, bits: u32) -> Self {
         Self::from_parts(space, offset, bits, 0)
@@ -88,7 +96,7 @@ impl Var {
     }
 
     pub fn display<'t>(&'t self, project: &'t Project) -> VarFormatter<'t, 't> {
-        self.display_with(Some(project.lifter().translator()))
+        self.display_with(Some(project.lifter().language()))
     }
 }
 
@@ -190,16 +198,14 @@ impl VarView {
             .map(|iv| Var::new0(self.space(), iv.start, (iv.end - iv.start) as u32 * 8))
     }
 
-    pub fn registers<T: Borrow<Translator>>(translator: T) -> VarView {
-        let t = translator.borrow();
-        let space_id = t.manager().register_space_id();
-
+    pub fn registers(language: &'static Language) -> VarView {
         Self {
-            space: space_id,
+            space: language.space_id(language.register_space()),
             intervals: IntervalSet::from_iter(
-                t.registers()
-                    .iter()
-                    .map(|((off, sz), _)| *off..(off + (*sz as u64))),
+                language
+                    .registers()
+                    .filter(|(_, varnode)| language.in_register_space(varnode))
+                    .map(|(_, varnode)| varnode.offset()..varnode.offset() + varnode.size() as u64),
             ),
         }
     }
@@ -400,13 +406,15 @@ impl<'var, 'trans> fmt::Display for VarFormatter<'var, 'trans> {
             return self.var.fmt(f);
         }
 
-        if let Some(trans) = self.fmt.translator {
-            let space = unsafe { trans.manager().unchecked_space_by_id(self.var.space()) };
+        if let Some((language, space_name)) = self.fmt.language.and_then(|language| {
+            Some((
+                language,
+                language.space_name(self.var.space().index() as u8)?,
+            ))
+        }) {
+            let space = self.var.space();
             if space.is_register() {
-                if let Some(name) = trans
-                    .registers()
-                    .get(self.var.offset(), self.var.nbits() as usize / 8)
-                {
+                if let Some(name) = register_name(language, self.var) {
                     write!(
                         f,
                         "{}{}{}.{}{}{}:{}{}{}",
@@ -427,7 +435,7 @@ impl<'var, 'trans> fmt::Display for VarFormatter<'var, 'trans> {
                         f,
                         "{}{}{}[{}{}{}{}{:#x}{}].{}{}{}:{}{}{}",
                         self.fmt.variable_start,
-                        space.name(),
+                        space_name,
                         self.fmt.variable_end,
                         self.fmt.keyword_start,
                         if sig == 0 {
@@ -470,7 +478,7 @@ impl<'var, 'trans> fmt::Display for VarFormatter<'var, 'trans> {
                     f,
                     "{}{}{}[{}{}{}{}{:#x}{}].{}{}{}:{}{}{}",
                     self.fmt.variable_start,
-                    space.name(),
+                    space_name,
                     self.fmt.variable_end,
                     self.fmt.keyword_start,
                     if sig == 0 {
@@ -516,62 +524,17 @@ impl<'var, 'trans> fmt::Display for VarFormatter<'var, 'trans> {
 
 pub struct VarFormatter<'var, 'trans> {
     var: &'var Var,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
 }
 
-impl<'var, 'trans> TranslatorDisplay<'var, 'trans> for Var {
+impl<'var, 'trans> LanguageDisplay<'var, 'trans> for Var {
     type Target = VarFormatter<'var, 'trans>;
 
     fn display_full(
         &'var self,
-        fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+        fmt: Cow<'trans, LanguageFormatter<'trans>>,
     ) -> VarFormatter<'var, 'trans> {
         VarFormatter { var: self, fmt }
-    }
-}
-
-impl From<VarnodeData> for Var {
-    fn from(vnd: VarnodeData) -> Self {
-        Self {
-            space: vnd.space(),
-            offset: vnd.offset(),
-            bits: vnd.size() as u32 * 8,
-            generation: 0,
-        }
-    }
-}
-
-impl<'z> FromSpace<'z, Operand> for Var {
-    fn from_space_with(t: Operand, _arena: &'z IRBuilderArena, manager: &SpaceManager) -> Self {
-        Var::from_space(t, manager)
-    }
-
-    fn from_space(operand: Operand, manager: &SpaceManager) -> Self {
-        match operand {
-            Operand::Address { value, size } => Var {
-                offset: value.offset(),
-                space: manager.default_space_id(),
-                bits: size as u32 * 8,
-                generation: 0,
-            },
-            Operand::Register { offset, size, .. } => Var {
-                offset,
-                space: manager.register_space_id(),
-                bits: size as u32 * 8,
-                generation: 0,
-            },
-            Operand::Variable {
-                offset,
-                space,
-                size,
-            } => Var {
-                offset,
-                space,
-                bits: size as u32 * 8,
-                generation: 0,
-            },
-            _ => panic!("cannot create Var from Operand::Constant"),
-        }
     }
 }
 
@@ -584,7 +547,7 @@ impl SimpleVar {
     }
 
     pub fn display<'t>(&'t self, project: &'t Project) -> SimpleVarFormatter<'t, 't> {
-        self.display_with(Some(project.lifter().translator()))
+        self.display_with(Some(project.lifter().language()))
     }
 }
 
@@ -673,13 +636,15 @@ impl<'var, 'trans> fmt::Display for SimpleVarFormatter<'var, 'trans> {
             return self.var.fmt(f);
         }
 
-        if let Some(trans) = self.fmt.translator {
-            let space = unsafe { trans.manager().unchecked_space_by_id(self.var.space()) };
+        if let Some((language, space_name)) = self.fmt.language.and_then(|language| {
+            Some((
+                language,
+                language.space_name(self.var.space().index() as u8)?,
+            ))
+        }) {
+            let space = self.var.space();
             if space.is_register() {
-                if let Some(name) = trans
-                    .registers()
-                    .get(self.var.offset(), self.var.nbits() as usize / 8)
-                {
+                if let Some(name) = register_name(language, self.var) {
                     write!(
                         f,
                         "{}{}{}:{}{}{}",
@@ -697,7 +662,7 @@ impl<'var, 'trans> fmt::Display for SimpleVarFormatter<'var, 'trans> {
                         f,
                         "{}{}{}[{}{}{}{}{:#x}{}]:{}{}{}",
                         self.fmt.variable_start,
-                        space.name(),
+                        space_name,
                         self.fmt.variable_end,
                         self.fmt.keyword_start,
                         if sig == 0 {
@@ -734,7 +699,7 @@ impl<'var, 'trans> fmt::Display for SimpleVarFormatter<'var, 'trans> {
                     f,
                     "{}{}{}[{}{}{}{}{:#x}{}]:{}{}{}",
                     self.fmt.variable_start,
-                    space.name(),
+                    space_name,
                     self.fmt.variable_end,
                     self.fmt.keyword_start,
                     if sig == 0 {
@@ -772,17 +737,29 @@ impl<'var, 'trans> fmt::Display for SimpleVarFormatter<'var, 'trans> {
     }
 }
 
-pub struct SimpleVarFormatter<'var, 'trans> {
-    var: &'var SimpleVar,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+fn register_name(language: &Language, var: &Var) -> Option<&'static str> {
+    let varnode = Varnode::new(
+        language.register_space(),
+        var.offset(),
+        (var.nbits() / 8) as u16,
+    );
+    language.register_name(&varnode).or_else(|| {
+        let register = language.containing_register(&varnode)?;
+        language.register_name(&register)
+    })
 }
 
-impl<'var, 'trans> TranslatorDisplay<'var, 'trans> for SimpleVar {
+pub struct SimpleVarFormatter<'var, 'trans> {
+    var: &'var SimpleVar,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
+}
+
+impl<'var, 'trans> LanguageDisplay<'var, 'trans> for SimpleVar {
     type Target = SimpleVarFormatter<'var, 'trans>;
 
     fn display_full(
         &'var self,
-        fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+        fmt: Cow<'trans, LanguageFormatter<'trans>>,
     ) -> SimpleVarFormatter<'var, 'trans> {
         SimpleVarFormatter { var: self, fmt }
     }

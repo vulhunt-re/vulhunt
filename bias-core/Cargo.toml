@@ -42,7 +42,7 @@ encode_unicode = "1"
 fixedbitset = { version = "0.4", features = ["serde"] }
 flate2 = { version = "1", features = ["zlib-rs"], default-features = false }
 fst = "0.4"
-fuguex-state = "0.2"
+fugue = { git = "https://github.com/fugue-re/fugue-core-next.git", rev = "bb92dec3dcdf0122d9264c64f8cd3d93e587d9d1", default-features = false }
 gazebo = "0.8"
 gimli = "0.28"
 goblin = { version = "0.4", package = "bias-goblin" }
@@ -59,6 +59,7 @@ petgraph = { version = "0.6", features = ["serde-1"] }
 postcard = { version = "1", features = ["use-std"] }
 range-set-blaze = "0.1"
 regex = "1"
+rkyv = "0.8"
 roaring = "0.11"
 semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
@@ -86,12 +87,6 @@ replace_with = { version = "0.1", optional = true }
 tree-sitter = { version = "0.25", optional = true }
 weggli = { version = "0.2", package = "wegglix", optional = true }
 which = { version = "8", optional = true }
-
-[target.'cfg(windows)'.dependencies]
-fugue = { version = "0.2", features = ["bigint-malachite"], default-features = false }
-
-[target.'cfg(not(windows))'.dependencies]
-fugue = { version = "0.2", features = ["bigint-rug"], default-features = false }
 
 [build-dependencies]
 cmake = { version = "0.1", optional = true }

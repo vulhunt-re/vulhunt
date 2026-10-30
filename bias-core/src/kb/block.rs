@@ -2,17 +2,16 @@ use std::borrow::Cow;
 use std::fmt;
 
 use ahash::AHashSet;
-use fugue::ir::il::traits::{TranslatorDisplay, TranslatorFormatter};
-use fugue::ir::Address;
 use itertools::{Itertools, Position};
 use petgraph::graph::NodeIndex;
 use smallvec::SmallVec;
 
 use crate::cfg::insn::InsnInfo;
 use crate::ir::insn::{InsnChunk, InsnChunks};
+use crate::ir::traits::{LanguageDisplay, LanguageFormatter};
 use crate::ir::{
-    BitVec, Insn, InsnTarget, Location, PhiVarsMut, SimpleVar, Stmt, Term, Var, VarsMutVisitor,
-    VarsVisitor, Visit, VisitMut, VisitOpVarsMut, VisitVars, VisitVarsMut,
+    Address, BitVec, Insn, InsnTarget, Location, PhiVarsMut, SimpleVar, Stmt, Term, Var,
+    VarsMutVisitor, VarsVisitor, Visit, VisitMut, VisitOpVarsMut, VisitVars, VisitVarsMut,
 };
 use crate::kb::function::FunctionId;
 use crate::kb::id::Identifiable;
@@ -285,7 +284,7 @@ impl CodeBlock {
     }
 
     pub fn display<'t>(&'t self, project: &'t Project) -> CodeBlockFormatter<'t, 't> {
-        self.display_with(Some(project.lifter().translator()))
+        self.display_with(Some(project.lifter().language()))
     }
 
     pub fn len(&self) -> usize {
@@ -333,7 +332,7 @@ where
 
 pub struct CodeBlockFormatter<'cb, 'trans> {
     blk: &'cb CodeBlock,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
 }
 
 impl<'cb, 'trans> fmt::Display for CodeBlockFormatter<'cb, 'trans> {
@@ -363,10 +362,10 @@ impl<'cb, 'trans> fmt::Display for CodeBlockFormatter<'cb, 'trans> {
     }
 }
 
-impl<'cb, 'trans> TranslatorDisplay<'cb, 'trans> for CodeBlock {
+impl<'cb, 'trans> LanguageDisplay<'cb, 'trans> for CodeBlock {
     type Target = CodeBlockFormatter<'cb, 'trans>;
 
-    fn display_full(&'cb self, fmt: Cow<'trans, TranslatorFormatter<'trans>>) -> Self::Target {
+    fn display_full(&'cb self, fmt: Cow<'trans, LanguageFormatter<'trans>>) -> Self::Target {
         CodeBlockFormatter { blk: self, fmt }
     }
 }
@@ -555,13 +554,13 @@ impl CodeBlockInsnChunk {
     }
 
     pub fn display<'t>(&'t self, project: &'t Project) -> CodeBlockInsnChunkFormatter<'t, 't> {
-        self.display_with(Some(project.lifter().translator()))
+        self.display_with(Some(project.lifter().language()))
     }
 }
 
 pub struct CodeBlockInsnChunkFormatter<'cb, 'trans> {
     chunk: &'cb CodeBlockInsnChunk,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
 }
 
 impl<'cb, 'trans> fmt::Display for CodeBlockInsnChunkFormatter<'cb, 'trans> {
@@ -582,10 +581,10 @@ impl<'cb, 'trans> fmt::Display for CodeBlockInsnChunkFormatter<'cb, 'trans> {
     }
 }
 
-impl<'cb, 'trans> TranslatorDisplay<'cb, 'trans> for CodeBlockInsnChunk {
+impl<'cb, 'trans> LanguageDisplay<'cb, 'trans> for CodeBlockInsnChunk {
     type Target = CodeBlockInsnChunkFormatter<'cb, 'trans>;
 
-    fn display_full(&'cb self, fmt: Cow<'trans, TranslatorFormatter<'trans>>) -> Self::Target {
+    fn display_full(&'cb self, fmt: Cow<'trans, LanguageFormatter<'trans>>) -> Self::Target {
         CodeBlockInsnChunkFormatter { chunk: self, fmt }
     }
 }
@@ -808,13 +807,13 @@ impl ChunkedCodeBlock {
     }
 
     pub fn display<'t>(&'t self, project: &'t Project) -> ChunkedCodeBlockFormatter<'t, 't> {
-        self.display_with(Some(project.lifter().translator()))
+        self.display_with(Some(project.lifter().language()))
     }
 }
 
 pub struct ChunkedCodeBlockFormatter<'cb, 'trans> {
     blk: &'cb ChunkedCodeBlock,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
 }
 
 impl<'cb, 'trans> fmt::Display for ChunkedCodeBlockFormatter<'cb, 'trans> {
@@ -839,10 +838,10 @@ impl<'cb, 'trans> fmt::Display for ChunkedCodeBlockFormatter<'cb, 'trans> {
     }
 }
 
-impl<'cb, 'trans> TranslatorDisplay<'cb, 'trans> for ChunkedCodeBlock {
+impl<'cb, 'trans> LanguageDisplay<'cb, 'trans> for ChunkedCodeBlock {
     type Target = ChunkedCodeBlockFormatter<'cb, 'trans>;
 
-    fn display_full(&'cb self, fmt: Cow<'trans, TranslatorFormatter<'trans>>) -> Self::Target {
+    fn display_full(&'cb self, fmt: Cow<'trans, LanguageFormatter<'trans>>) -> Self::Target {
         ChunkedCodeBlockFormatter { blk: self, fmt }
     }
 }
@@ -980,13 +979,13 @@ impl EmptyCodeBlock {
     }
 
     pub fn display<'t>(&'t self, project: &'t Project) -> EmptyCodeBlockFormatter<'t, 't> {
-        self.display_with(Some(project.lifter().translator()))
+        self.display_with(Some(project.lifter().language()))
     }
 }
 
 pub struct EmptyCodeBlockFormatter<'cb, 'trans> {
     blk: &'cb EmptyCodeBlock,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
 }
 
 impl<'cb, 'trans> fmt::Display for EmptyCodeBlockFormatter<'cb, 'trans> {
@@ -1005,10 +1004,10 @@ impl<'cb, 'trans> fmt::Display for EmptyCodeBlockFormatter<'cb, 'trans> {
     }
 }
 
-impl<'cb, 'trans> TranslatorDisplay<'cb, 'trans> for EmptyCodeBlock {
+impl<'cb, 'trans> LanguageDisplay<'cb, 'trans> for EmptyCodeBlock {
     type Target = EmptyCodeBlockFormatter<'cb, 'trans>;
 
-    fn display_full(&'cb self, fmt: Cow<'trans, TranslatorFormatter<'trans>>) -> Self::Target {
+    fn display_full(&'cb self, fmt: Cow<'trans, LanguageFormatter<'trans>>) -> Self::Target {
         EmptyCodeBlockFormatter { blk: self, fmt }
     }
 }
@@ -1214,13 +1213,13 @@ impl EmptyOrChunkedCodeBlock {
     }
 
     pub fn display<'t>(&'t self, project: &'t Project) -> EmptyOrChunkedCodeBlockFomatter<'t, 't> {
-        self.display_with(Some(project.lifter().translator()))
+        self.display_with(Some(project.lifter().language()))
     }
 }
 
 pub struct EmptyOrChunkedCodeBlockFomatter<'cb, 'trans> {
     blk: &'cb EmptyOrChunkedCodeBlock,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
 }
 
 impl<'cb, 'trans> fmt::Display for EmptyOrChunkedCodeBlockFomatter<'cb, 'trans> {
@@ -1236,10 +1235,10 @@ impl<'cb, 'trans> fmt::Display for EmptyOrChunkedCodeBlockFomatter<'cb, 'trans> 
     }
 }
 
-impl<'cb, 'trans> TranslatorDisplay<'cb, 'trans> for EmptyOrChunkedCodeBlock {
+impl<'cb, 'trans> LanguageDisplay<'cb, 'trans> for EmptyOrChunkedCodeBlock {
     type Target = EmptyOrChunkedCodeBlockFomatter<'cb, 'trans>;
 
-    fn display_full(&'cb self, fmt: Cow<'trans, TranslatorFormatter<'trans>>) -> Self::Target {
+    fn display_full(&'cb self, fmt: Cow<'trans, LanguageFormatter<'trans>>) -> Self::Target {
         EmptyOrChunkedCodeBlockFomatter { blk: self, fmt }
     }
 }

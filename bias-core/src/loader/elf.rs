@@ -8,8 +8,7 @@ use std::path::{Path, PathBuf};
 
 use compact_str::format_compact;
 use fugue::bytes::Endian;
-use fugue::ir::error::Error as LanguageDBError;
-use fugue::ir::{Address, LanguageDB};
+use fugue::sleigh::language::{LanguageDB, LanguageError};
 use gimli::AttributeValue;
 use goblin::elf::compression_header::{CompressionHeader, ELFCOMPRESS_ZLIB, ELFCOMPRESS_ZSTD};
 use goblin::elf::dynamic::DT_PLTGOT;
@@ -43,6 +42,7 @@ use crate::cfg::context::ICFGExtendedContext;
 use crate::cfg::FlowKind;
 use crate::eval::observer::{Observer, ObserverError};
 use crate::eval::{self, Bound, IREvalConfig, IREvaluator};
+use crate::ir::Address;
 use crate::kb::function::FunctionInfo;
 use crate::kb::id::Identifiable;
 use crate::kb::{uuid, Uuid};
@@ -56,13 +56,13 @@ const MAX_DECOMPRESSED_SECTION_SIZE: u64 = 0x40000000; // 1 GiB
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
+    LanguageDB(#[from] LanguageError),
+    #[error(transparent)]
+    LifterBuilder(#[from] LifterBuilderError),
+    #[error(transparent)]
     LoaderFormat(#[from] goblin::error::Error),
     #[error(transparent)]
     LoaderIO(#[from] std::io::Error),
-    #[error(transparent)]
-    LanguageDB(#[from] LanguageDBError),
-    #[error(transparent)]
-    LifterBuilder(#[from] LifterBuilderError),
     #[error("unsupported architecture {0:x}")]
     UnsupportedArchitecture(u16),
     #[error("unsupported lifter convention: {0}")]
@@ -142,13 +142,11 @@ impl<'a> ELFLoader<'a> {
             )
             .ok_or_else(|| Error::UnsupportedArchitecture(arch))?;
 
-        let translator = LifterBuilder::build_or_cached(&builder)?;
+        let language = LifterBuilder::language(&builder)?;
 
-        let convention = translator
-            .compiler_conventions()
-            .get(&*self.convention)
-            .cloned()
-            .or_else(|| translator.compiler_conventions().get("default").cloned())
+        let convention = language
+            .convention(&self.convention)
+            .or_else(|| language.convention("default"))
             .ok_or_else(|| Error::UnsupportedConvention(self.convention.clone()))?;
 
         let base = if matches!(elf.header.e_type, ET_DYN | ET_REL) {
@@ -157,7 +155,7 @@ impl<'a> ELFLoader<'a> {
             Address::from(0u64)
         };
 
-        let lifter = Lifter::new_with(translator, convention, arch_info);
+        let lifter = Lifter::new_with(language, convention, arch_info)?;
         let loaded = LoadedELF::new_with(elf, path, bytes, &lifter, base);
 
         Ok((lifter, loaded))
@@ -239,7 +237,7 @@ impl ELFExternalSymbols {
         });
 
         let mut new_self = ELFExternalSymbols {
-            base: Address::from(base),
+            base,
             indices: Default::default(),
             sym_to_addr: Default::default(),
             addr_to_sym: Default::default(),
@@ -531,7 +529,7 @@ impl<'a> LoadedELF<'a> {
     ) -> Self {
         let arch = lifter.arch().to_owned();
         let mut externs =
-            ELFExternalSymbols::new(&elf, arch.external_thunk_template(lifter.translator()));
+            ELFExternalSymbols::new(&elf, arch.external_thunk_template(lifter.language()));
 
         // NOTE(sanity): we check that base is selected such that we will not
         // overflow, if it will then we assume a base of 0.
@@ -1287,7 +1285,11 @@ impl<'a> LoadedELF<'a> {
         for section in self.elf.section_headers.iter() {
             if section.sh_size == 0 || !section.is_alloc() {
                 let mut lrgn = LoaderRegion::default();
-                lrgn.name = self.elf.shdr_strtab.get_at(section.sh_name).map(Cow::Borrowed);
+                lrgn.name = self
+                    .elf
+                    .shdr_strtab
+                    .get_at(section.sh_name)
+                    .map(Cow::Borrowed);
                 continue;
             }
 
@@ -1317,7 +1319,11 @@ impl<'a> LoadedELF<'a> {
 
             let mut lrgn = LoaderRegion::default();
 
-            lrgn.name = self.elf.shdr_strtab.get_at(section.sh_name).map(Cow::Borrowed);
+            lrgn.name = self
+                .elf
+                .shdr_strtab
+                .get_at(section.sh_name)
+                .map(Cow::Borrowed);
             lrgn.code = section.is_executable();
             lrgn.read_only = !section.is_writable();
             lrgn.bounds = vstart..vend;
@@ -1487,7 +1493,11 @@ impl<'a> LoadedELF<'a> {
 
             let mut lrgn = LoaderRegion::default();
 
-            lrgn.name = self.elf.shdr_strtab.get_at(section.sh_name).map(Cow::Borrowed);
+            lrgn.name = self
+                .elf
+                .shdr_strtab
+                .get_at(section.sh_name)
+                .map(Cow::Borrowed);
             lrgn.code = section.is_executable();
             lrgn.read_only = !section.is_writable();
             lrgn.bounds = vstart..vend;
@@ -1640,7 +1650,6 @@ impl<'a> LoadedELF<'a> {
                         None
                     }
                 })
-                .into_iter()
             {
                 let end = curr_blk.last_insn().address();
                 if eval
@@ -2047,7 +2056,7 @@ impl<'a> Symbolise for ELFSymboliser<'a> {
     fn apply_symbols(&self, project: &mut Project) -> Result<(), SymboliseError> {
         let arch = project.lifter().arch().to_owned();
         // alignment should always be >= 1
-        let align_mask = project.lifter().translator().alignment() as u64 - 1;
+        let align_mask = project.lifter().language().address_alignment() as u64 - 1;
 
         // Apply symbols from imports
         for sym in self.elf.dynsyms.iter() {

@@ -1,12 +1,12 @@
 use std::cell::RefCell;
 
-use fugue::ir::Address;
 use pdb::{FallibleIterator, Source, PDB};
 use thiserror::Error;
 use ustr::Ustr;
 use uuid::Uuid;
 
 use super::{Symbolise, SymboliseError};
+use crate::ir::Address;
 use crate::kb::debug::file_info::SourceFileInfo;
 use crate::kb::id::Identifiable;
 use crate::Project;

@@ -5,15 +5,8 @@ use std::ops::{Neg, Not, Range};
 
 use ahash::{AHashMap, AHashSet};
 use fugue::bv::BitVec;
-use fugue::bytes::{Order, BE, LE};
-use fugue::ir::convention::PrototypeOperand;
-use fugue::ir::il::traits::TranslatorDisplay;
-use fugue::ir::Address;
-use fuguex_state::flat::FlatState;
-use fuguex_state::paged::{PagedState, Segment as LoadedSegment};
-pub use fuguex_state::pcode::Error as StateError;
-use fuguex_state::pcode::PCodeState;
-use fuguex_state::traits::{State, StateOps};
+use fugue::bytes::{ByteOrder, BE, LE};
+use fugue::lifter::runtime::convention::PrototypeOperand;
 use itertools::{Itertools, Position};
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -22,8 +15,10 @@ use ustr::Ustr;
 use crate::any::AnyLifetime;
 use crate::cfg::insn::InsnTable;
 use crate::inject::{InjectionOperand, InjectionStub};
-use crate::ir::traits::{BitSize, ToAddress};
-use crate::ir::{BinOp, BinRel, BranchTarget, Expr, Insn, Location, Stmt, Term, Type, UnOp, Var};
+use crate::ir::traits::{BitSize, LanguageDisplay, ToAddress};
+use crate::ir::{
+    Address, BinOp, BinRel, BranchTarget, Expr, Insn, Location, Stmt, Term, Type, UnOp, Var,
+};
 use crate::kb::block::CodeBlock;
 use crate::kb::function::Function;
 use crate::kb::function_summary::{FunctionSummary, FunctionSummaryId};
@@ -32,10 +27,16 @@ use crate::project::ProjectContext;
 
 pub mod observer;
 pub mod resolver;
+pub mod state;
 pub mod strategy;
 pub mod traits;
 
 use self::observer::{Observer, ObserverError, ObserverId};
+use self::state::flat::FlatState;
+use self::state::paged::{PagedState, Segment as LoadedSegment};
+pub use self::state::pcode::Error as StateError;
+use self::state::pcode::PCodeState;
+use self::state::traits::{State, StateOps};
 use self::strategy::{DefaultStrategy, PredicatedLocation, Strategy};
 
 pub trait IRContext: Any + 'static {
@@ -112,8 +113,7 @@ macro_rules! impl_context {
             }
 
             fn write_pointer(&mut self, address: Address, val: Address) -> Result<(), StateError> {
-                let val =
-                    BitVec::from_u64(u64::from(val), self.memory_space_ref().address_size() * 8);
+                let val = BitVec::from_u64(u64::from(val), self.address_size() as u32 * 8);
                 self.write_addr(address, &val)
             }
 
@@ -142,7 +142,7 @@ macro_rules! impl_context {
                     .view_values(offset, bytes)
                     .map_err(StateError::Memory)?;
 
-                Ok(if <$order as Order>::ENDIAN.is_big() {
+                Ok(if <$order as ByteOrder>::ENDIAN.is_big() {
                     BitVec::from_be_bytes(view)
                 } else {
                     BitVec::from_le_bytes(view)
@@ -160,7 +160,7 @@ macro_rules! impl_context {
                     .view_values_mut(offset, bytes)
                     .map_err(StateError::Memory)?;
 
-                if <$order as Order>::ENDIAN.is_big() {
+                if <$order as ByteOrder>::ENDIAN.is_big() {
                     val.to_be_bytes(view)
                 } else {
                     val.to_le_bytes(view)
@@ -171,38 +171,34 @@ macro_rules! impl_context {
 
             fn read_operand(&self, operand: &PrototypeOperand) -> Result<BitVec, StateError> {
                 match operand {
-                    PrototypeOperand::Register { varnode, .. } => self.read_var(&Var::new(
-                        self.registers().address_space_ref(),
+                    PrototypeOperand::Register(varnode) => self.read_var(&Var::new(
+                        self.register_space_id(),
                         varnode.offset(),
                         varnode.size() as u32 * 8,
                         0,
                     )),
-                    PrototypeOperand::StackRelative(offset) => {
+                    PrototypeOperand::StackRelative { offset, .. } => {
                         let stack_base = self.read_stack_pointer()?;
                         let addr = stack_base + *offset;
 
                         self.read_var(&Var::new(
-                            self.memory().address_space_ref(),
+                            self.global_space_id(),
                             addr.into(),
-                            self.memory().address_space_ref().address_size() as u32,
+                            self.address_size() as u32 * 8,
                             0,
                         ))
                     }
-                    PrototypeOperand::RegisterJoin {
-                        first_varnode,
-                        second_varnode,
-                        ..
-                    } => {
+                    PrototypeOperand::RegisterJoin(first_varnode, second_varnode) => {
                         // high
                         let first = self.read_var(&Var::new(
-                            self.registers().address_space_ref(),
+                            self.register_space_id(),
                             first_varnode.offset(),
                             first_varnode.size() as u32 * 8,
                             0,
                         ))?;
                         // low
                         let second = self.read_var(&Var::new(
-                            self.registers().address_space_ref(),
+                            self.register_space_id(),
                             second_varnode.offset(),
                             second_varnode.size() as u32 * 8,
                             0,
@@ -214,6 +210,9 @@ macro_rules! impl_context {
                                 | second.unsigned_cast(bits),
                         )
                     }
+                    PrototypeOperand::Address { .. } | PrototypeOperand::Join { .. } => {
+                        Err(StateError::unsupported_operand(*operand))
+                    }
                 }
             }
 
@@ -223,50 +222,46 @@ macro_rules! impl_context {
                 val: &BitVec,
             ) -> Result<(), StateError> {
                 match operand {
-                    PrototypeOperand::Register { varnode, .. } => self.write_var(
+                    PrototypeOperand::Register(varnode) => self.write_var(
                         &Var::new(
-                            self.registers().address_space_ref(),
+                            self.register_space_id(),
                             varnode.offset(),
                             varnode.size() as u32 * 8,
                             0,
                         ),
                         val,
                     ),
-                    PrototypeOperand::StackRelative(offset) => {
+                    PrototypeOperand::StackRelative { offset, .. } => {
                         let stack_base = self.read_stack_pointer()?;
                         let addr = stack_base + *offset;
 
                         self.write_var(
                             &Var::new(
-                                self.memory().address_space_ref(),
+                                self.global_space_id(),
                                 addr.into(),
-                                self.memory().address_space_ref().address_size() as u32,
+                                self.address_size() as u32 * 8,
                                 0,
                             ),
                             val,
                         )
                     }
-                    PrototypeOperand::RegisterJoin {
-                        first_varnode,
-                        second_varnode,
-                        ..
-                    } => {
+                    PrototypeOperand::RegisterJoin(first_varnode, second_varnode) => {
                         // high
                         let first = Var::new(
-                            self.registers().address_space_ref(),
+                            self.register_space_id(),
                             first_varnode.offset(),
                             first_varnode.size() as u32 * 8,
                             0,
                         );
                         // low
                         let second = Var::new(
-                            self.registers().address_space_ref(),
+                            self.register_space_id(),
                             second_varnode.offset(),
                             second_varnode.size() as u32 * 8,
                             0,
                         );
 
-                        let bits = (first.nbits() + second.nbits()) as usize;
+                        let bits = first.nbits() + second.nbits();
                         let val = if val.bits() != bits {
                             val.unsigned_cast(bits)
                         } else {
@@ -274,13 +269,16 @@ macro_rules! impl_context {
                         };
 
                         // first is upper half
-                        let first_val = (&val >> second.nbits()).cast(first.nbits() as usize);
-                        let second_val = val.unsigned_cast(second.nbits() as usize);
+                        let first_val = (&val >> second.nbits()).cast(first.nbits());
+                        let second_val = val.unsigned_cast(second.nbits());
 
                         self.write_var(&first, &first_val)?;
                         self.write_var(&second, &second_val)?;
 
                         Ok(())
+                    }
+                    PrototypeOperand::Address { .. } | PrototypeOperand::Join { .. } => {
+                        Err(StateError::unsupported_operand(*operand))
                     }
                 }
             }
@@ -306,7 +304,7 @@ macro_rules! impl_context {
                         .map_err(StateError::Memory)?
                 };
 
-                if <$order as Order>::ENDIAN.is_big() {
+                if <$order as ByteOrder>::ENDIAN.is_big() {
                     val.to_be_bytes(view)
                 } else {
                     val.to_le_bytes(view)
@@ -316,8 +314,7 @@ macro_rules! impl_context {
             }
 
             fn write_var_addr(&mut self, var: &Var, addr: &Address) -> Result<(), StateError> {
-                let bits = var.nbits() as usize;
-                let bv = BitVec::from_u64(u64::from(*addr), bits);
+                let bv = BitVec::from_u64(u64::from(*addr), var.nbits());
 
                 self.write_var(var, &bv)
             }
@@ -342,7 +339,7 @@ macro_rules! impl_context {
                         .map_err(StateError::Memory)?
                 };
 
-                Ok(if <$order as Order>::ENDIAN.is_big() {
+                Ok(if <$order as ByteOrder>::ENDIAN.is_big() {
                     BitVec::from_be_bytes(view)
                 } else {
                     BitVec::from_le_bytes(view)
@@ -730,9 +727,8 @@ impl IREvaluator {
             return Err(Error::Configuration("stack start is not a stack address"));
         }
 
-        let translator = context.lifter.translator();
+        let language = context.lifter.language();
         let convention = context.lifter.convention();
-        let space = translator.manager().default_space();
         let max_address = Address::from(
             1u64.checked_shl(context.lifter.address_bits())
                 .unwrap_or(0)
@@ -764,28 +760,18 @@ impl IREvaluator {
             })
             .collect::<Vec<_>>();
 
-        let flat = FlatState::from_vec(space, backing);
-        let mut state = PagedState::from_parts(ivt.into_iter(), flat);
-
-        // validate stack does not overlap with any mapped regions
-        for mapping in state.mappings() {
-            let base = mapping.base_address();
-            let mapping_iv = base..base + mapping.len();
-
-            if stack.contains(&mapping_iv.start) || stack.contains(&(mapping_iv.end - 1usize)) {
-                return Err(Error::Configuration("stack overlaps with mapped region"));
-            }
-        }
+        let flat = FlatState::from_vec(backing);
+        let mut state = PagedState::from_parts(ivt, flat);
 
         state
             .static_mapping("stack", config.stack_base, config.stack_size)
             .map_err(|_| Error::Configuration("could not create stack"))?;
 
-        let mut context = if translator.is_big_endian() {
-            let context = PCodeState::<_, BE>::new(state, translator, convention);
+        let mut context = if language.endian().is_big() {
+            let context = PCodeState::<_, BE>::new(state, language, convention);
             Box::new(context) as Box<dyn IRContext>
         } else {
-            let context = PCodeState::<_, LE>::new(state, translator, convention);
+            let context = PCodeState::<_, LE>::new(state, language, convention);
             Box::new(context) as Box<dyn IRContext>
         };
 
@@ -844,15 +830,7 @@ impl IREvaluator {
     }
 
     pub fn mapped_regions<'a>(&'a self) -> impl Iterator<Item = Range<Address>> + 'a {
-        self.context
-            .memory()
-            .segments()
-            .intervals(..)
-            .chain(self.context.memory().mappings().map(|m| {
-                let base = m.base_address();
-                base..base + m.len()
-            }))
-            .sorted_by_key(|iv| iv.start)
+        self.context.memory().segments().intervals(..)
     }
 
     pub fn free_regions<'a>(&'a self) -> impl Iterator<Item = Range<Address>> + 'a {
@@ -1519,8 +1497,7 @@ impl IREvaluator {
                 InjectionOperand::Register(reg) => {
                     let nbits = reg.nbits();
                     if val.nbits() != nbits {
-                        self.context
-                            .write_var(&reg, &val.to_owned().cast(nbits as _))?;
+                        self.context.write_var(&reg, &val.to_owned().cast(nbits))?;
                     } else {
                         self.context.write_var(&reg, val)?;
                     }
@@ -1549,7 +1526,7 @@ impl IREvaluator {
 
             tracing::trace!(
                 "{loc} {}",
-                stmt.display_with(Some(context.lifter.translator()))
+                stmt.display_with(Some(context.lifter.language()))
             );
 
             match self.eval_stmt(context, observer_context, loc, stmt, strategy) {
@@ -1679,10 +1656,8 @@ impl IREvaluator {
 
                 debug_assert!(sval.nbits() == *bits);
 
-                let space = context.lifter.translator().manager().space_by_id(*spc);
-
                 let doff = dval.to_u64().ok_or_else(|| Error::InvalidAddess(loc))?;
-                let dvar = Var::new(space, doff, *bits, 0);
+                let dvar = Var::new(*spc, doff, *bits, 0);
 
                 self.write_var(observer_context, loc, &dvar, &mut sval, src)
                     .map_err(|_| Error::InvalidAccess(loc, dvar))?;
@@ -1719,14 +1694,12 @@ impl IREvaluator {
                             if self.config.ignore_invalid_branches
                                 && !context.itable.contains(ret.address)
                             {
-                                let sp = self.context.read_stack_pointer()?;
-                                self.context.write_stack_pointer(
-                                    sp + context
-                                        .lifter
-                                        .convention()
-                                        .default_prototype()
-                                        .extra_pop(),
-                                )?;
+                                if let Some(extra_pop) =
+                                    context.lifter.default_prototype().extra_pop()
+                                {
+                                    let sp = self.context.read_stack_pointer()?;
+                                    self.context.write_stack_pointer(sp + extra_pop)?;
+                                }
                                 loc + 1
                             } else {
                                 ret
@@ -1773,10 +1746,10 @@ impl IREvaluator {
                 self.observe_pre_call(observer_context, loc, ret.address)?;
 
                 if self.config.ignore_invalid_branches && !context.itable.contains(ret.address) {
-                    let sp = self.context.read_stack_pointer()?;
-                    self.context.write_stack_pointer(
-                        sp + context.lifter.convention().default_prototype().extra_pop(),
-                    )?;
+                    if let Some(extra_pop) = context.lifter.default_prototype().extra_pop() {
+                        let sp = self.context.read_stack_pointer()?;
+                        self.context.write_stack_pointer(sp + extra_pop)?;
+                    }
                     return Ok(loc + 1);
                 }
 
@@ -1867,7 +1840,8 @@ impl IREvaluator {
                     .to_u64()
                     .ok_or_else(|| Error::InvalidAddess(loc))?;
 
-                let taddr = Address::new(context.lifter.global_space(), tgt);
+                let taddr =
+                    Address::from(context.lifter.language().wrap_offset_in_default_space(tgt));
                 Location::from(taddr)
             }
         };
@@ -1877,9 +1851,9 @@ impl IREvaluator {
                 loc,
                 AccessKind::Branch(nloc.position),
                 Var::new(
-                    context.lifter.global_space(),
+                    context.lifter.global_space_id(),
                     nloc.address.into(),
-                    context.lifter.global_space().address_size() as u32 * 8,
+                    context.lifter.language().address_size() as u32 * 8,
                     0,
                 ),
             )
@@ -1929,10 +1903,10 @@ impl IREvaluator {
             Ok(from)
         } else if tsign {
             // signed cast
-            Ok(from.signed().cast(tbits as usize))
+            Ok(from.signed().cast(tbits))
         } else {
             // unsigned cast
-            Ok(from.unsigned().cast(tbits as usize))
+            Ok(from.unsigned().cast(tbits))
         }
     }
 
@@ -1958,8 +1932,7 @@ impl IREvaluator {
                     .eval_expr(context, observer_context, loc, expr)?
                     .to_u64()
                     .ok_or_else(|| Error::InvalidAddess(loc))?;
-                let space = context.lifter.translator().manager().space_by_id(*spc);
-                let svar = Var::new(space, soff, *bits, 0);
+                let svar = Var::new(*spc, soff, *bits, 0);
 
                 self.read_var(observer_context, loc, &svar)
             }
@@ -1974,7 +1947,7 @@ impl IREvaluator {
                             Ok(val.not())
                         }
                     }
-                    UnOp::POPCOUNT(bits) => Ok(BitVec::from_u32(val.count_ones(), *bits as usize)),
+                    UnOp::POPCOUNT(bits) => Ok(BitVec::from_u32(val.count_ones(), *bits)),
                     _ => {
                         tracing::debug!("{} operation {:?} on {} unsupported", loc, op, val);
                         Err(Error::UnimplementedOp(loc))
@@ -2045,8 +2018,8 @@ impl IREvaluator {
                     BinRel::NEQ => lval != rval,
                     BinRel::LT => lval < rval,
                     BinRel::LE => lval <= rval,
-                    BinRel::SLT => lval.signed() < rval.signed(),
-                    BinRel::SLE => lval.signed() <= rval.signed(),
+                    BinRel::SLT => lval.signed_cmp(&rval).is_lt(),
+                    BinRel::SLE => lval.signed_cmp(&rval).is_le(),
                     BinRel::SBORROW => lval.signed_borrow(&rval),
                     BinRel::CARRY => lval.carry(&rval),
                     BinRel::SCARRY => lval.signed_carry(&rval),
@@ -2083,8 +2056,8 @@ impl IREvaluator {
                 let tbits = lval.nbits() + rval.nbits();
                 let sbits = rval.nbits();
 
-                let lvex = lval.unsigned().cast(tbits as usize) << sbits;
-                let rvex = rval.unsigned().cast(tbits as usize);
+                let lvex = lval.unsigned().cast(tbits) << sbits;
+                let rvex = rval.unsigned().cast(tbits);
 
                 Ok(lvex | rvex)
             }
@@ -2095,9 +2068,9 @@ impl IREvaluator {
                     Ok(val)
                 } else {
                     Ok(if *lsb > 0 {
-                        (val >> *lsb).unsigned().cast((msb - lsb) as usize)
+                        (val >> *lsb).unsigned().cast(msb - lsb)
                     } else {
-                        val.unsigned().cast((msb - lsb) as usize)
+                        val.unsigned().cast(msb - lsb)
                     })
                 }
             }
@@ -2106,15 +2079,15 @@ impl IREvaluator {
                 let vbits = val.nbits();
 
                 if vbits > *bits {
-                    Ok((val.unsigned() >> (vbits - bits)).cast(*bits as usize))
+                    Ok((val.unsigned() >> (vbits - bits)).cast(*bits))
                 } else {
-                    Ok(val.unsigned().cast(*bits as usize))
+                    Ok(val.unsigned().cast(*bits))
                 }
             }
             Expr::ExtractLow(expr, bits) => {
                 let val = self.eval_expr(context, observer_context, loc, expr)?;
 
-                Ok(val.unsigned().cast(*bits as usize))
+                Ok(val.unsigned().cast(*bits))
             }
             Expr::Intrinsic(name, args, _) => {
                 let mut result = None;

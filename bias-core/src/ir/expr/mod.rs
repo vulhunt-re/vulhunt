@@ -4,12 +4,11 @@ use std::fmt;
 
 use ahash::AHashMap as Map;
 use fugue::bv::BitVec;
-use fugue::bytes::Order;
-use fugue::ir::disassembly::{IRBuilderArena, VarnodeData};
-use fugue::ir::float_format::FloatFormat;
-use fugue::ir::il::pcode::Operand;
-use fugue::ir::space_manager::{FromSpace, SpaceManager};
-use fugue::ir::{Address, AddressSpace, AddressSpaceId};
+use fugue::bytes::ByteOrder;
+use fugue::lifter::runtime::language::Language;
+use fugue::lifter::runtime::pcode::Varnode;
+use fugue::sleigh::language::float_format::FloatFormat;
+use fugue::sleigh::language::spaces::AddressSpaceId;
 use itertools::Itertools;
 use smallvec::SmallVec;
 use ustr::Ustr;
@@ -18,7 +17,7 @@ use super::SimpleVar;
 use crate::ir::term::arena::Arena;
 use crate::ir::term::{Term, TermMut};
 use crate::ir::traits::*;
-use crate::ir::{FloatKind, Type, TypeKind, Var};
+use crate::ir::{Address, FloatKind, Type, TypeKind, Var};
 
 pub mod rewriter;
 pub mod simplify;
@@ -713,13 +712,16 @@ impl<'v, 't> Expr {
                 }
             }
             Expr::Load(expr, bits, space) => {
-                if let Some(trans) = d.fmt.translator {
-                    let space = unsafe { trans.manager().unchecked_space_by_id(*space) };
+                if let Some(space_name) = d
+                    .fmt
+                    .language
+                    .and_then(|language| language.space_name(space.index() as u8))
+                {
                     write!(
                         f,
                         "{}{}{}[{}]:{}{}{}",
                         d.fmt.variable_start,
-                        space.name(),
+                        space_name,
                         d.fmt.variable_end,
                         expr.display_full(Cow::Borrowed(&*d.fmt)),
                         d.fmt.value_start,
@@ -1066,7 +1068,7 @@ impl fmt::Display for Expr {
 
 pub struct ExprFormatter<'expr, 'trans> {
     expr: &'expr Expr,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
 }
 
 impl<'expr, 'trans> fmt::Display for ExprFormatter<'expr, 'trans> {
@@ -1075,12 +1077,12 @@ impl<'expr, 'trans> fmt::Display for ExprFormatter<'expr, 'trans> {
     }
 }
 
-impl<'expr, 'trans> TranslatorDisplay<'expr, 'trans> for Expr {
+impl<'expr, 'trans> LanguageDisplay<'expr, 'trans> for Expr {
     type Target = ExprFormatter<'expr, 'trans>;
 
     fn display_full(
         &'expr self,
-        fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+        fmt: Cow<'trans, LanguageFormatter<'trans>>,
     ) -> ExprFormatter<'expr, 'trans> {
         ExprFormatter { expr: self, fmt }
     }
@@ -1098,45 +1100,15 @@ impl From<Var> for Expr {
     }
 }
 
-impl<'z> FromSpace<'z, VarnodeData> for Expr {
-    fn from_space_with(t: VarnodeData, _arena: &'_ IRBuilderArena, manager: &SpaceManager) -> Self {
-        Expr::from_space(t, manager)
-    }
-
-    fn from_space(vnd: VarnodeData, manager: &SpaceManager) -> Expr {
-        let space = unsafe { manager.unchecked_space_by_id(vnd.space()) };
-        if space.is_constant() {
-            Expr::from(BitVec::from_u64(vnd.offset(), vnd.size() * 8))
+impl Expr {
+    pub fn from_varnode(language: &Language, varnode: &Varnode) -> Self {
+        if language.in_constant_space(varnode) {
+            Expr::from(BitVec::from_u64(
+                varnode.offset(),
+                varnode.size() as u32 * 8,
+            ))
         } else {
-            Expr::from(Var::from(vnd))
-            /*
-            if space.is_unique() || space.is_register() {
-                Expr::from(Var::from(vnd))
-            } else {
-                // address-like: the vnd size is what it points to
-                let asz = space.address_size() * 8;
-                let val = BitVec::from_u64(vnd.offset(), asz);
-                let src = if space.word_size() > 1 {
-                    let s = Expr::from(val);
-                    let bits = s.nbits();
-
-                    let w = Expr::from(BitVec::from_usize(space.word_size(), bits as usize));
-
-                    Expr::int_mul(s, w)
-                } else {
-                    Expr::from(val).into()
-                };
-
-                // TODO: we should preserve this information!!!
-                //Expr::Cast(Box::new(src), Type::Pointer(Box::new(Type::Void), asz))
-
-                Expr::Load(
-                    src,
-                    asz as u32,
-                    vnd.space(),
-                )
-            }
-            */
+            Expr::from(Var::from_varnode(language, varnode))
         }
     }
 }
@@ -1301,7 +1273,7 @@ impl Expr {
     {
         let expr = expr.into();
         if let Self::Val(bv, _) = &*expr {
-            Self::val(bv.signed_cast(bits as usize))
+            Self::val(bv.signed_cast(bits))
         } else if expr.is_signed_bits(bits) {
             expr
         } else {
@@ -1315,7 +1287,7 @@ impl Expr {
     {
         let mut expr = expr.into();
         if let Self::Val(bv, _) = &mut *expr {
-            *bv = bv.unsigned_cast(bits as usize);
+            *bv = bv.unsigned_cast(bits);
             expr
         } else if expr.is_unsigned_bits(bits) {
             expr
@@ -1353,11 +1325,9 @@ impl Expr {
         let expr = expr.into();
         if let Self::Val(e, _) = &*expr {
             Self::val(if bits >= e.nbits() {
-                e.unsigned_cast(bits as usize)
+                e.unsigned_cast(bits)
             } else {
-                (&*e >> (e.nbits() as u32 - bits as u32))
-                    .unsigned()
-                    .cast(bits as usize)
+                (&*e >> (e.nbits() - bits)).unsigned().cast(bits)
             })
         } else if expr.is_unsigned_bits(bits) {
             expr
@@ -1372,7 +1342,7 @@ impl Expr {
     {
         let expr = expr.into();
         if let Self::Val(e, _) = &*expr {
-            Self::val(e.unsigned_cast(bits as usize))
+            Self::val(e.unsigned_cast(bits))
         } else if expr.is_unsigned_bits(bits) {
             expr
         } else {
@@ -1399,7 +1369,7 @@ impl Expr {
             .map(|choice| {
                 let (mut guard, expr) = choice.into();
                 if guard.nbits() != selector_bits {
-                    guard.cast_assign(selector_bits as usize);
+                    guard.cast_assign(selector_bits);
                 }
 
                 bits = bits.max(expr.nbits());
@@ -1450,7 +1420,7 @@ impl Expr {
 
         match (&*lhs, &*rhs) {
             (Self::Val(h, _), Self::Val(l, _)) => Self::val({
-                let bits = (h.nbits() + l.nbits()) as usize;
+                let bits = h.nbits() + l.nbits();
                 (h.unsigned_cast(bits) << l.nbits()) | l.unsigned_cast(bits)
             }),
             _ => Self::Concat(lhs, rhs).into(),
@@ -1459,7 +1429,7 @@ impl Expr {
 
     pub fn concat_with<O, E1, E2>(lhs: E1, rhs: E2) -> Term<Self>
     where
-        O: Order,
+        O: ByteOrder,
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
     {
@@ -1468,7 +1438,7 @@ impl Expr {
 
         match (&*lhs, &*rhs) {
             (Self::Val(h, _), Self::Val(l, _)) => Self::val({
-                let bits = (h.nbits() + l.nbits()) as usize;
+                let bits = h.nbits() + l.nbits();
                 (h.unsigned_cast(bits) << l.nbits()) | l.unsigned_cast(bits)
             }),
             (Self::Extract(t1, l1, h1), Self::Extract(t2, l2, h2))
@@ -1800,16 +1770,11 @@ impl Expr {
         Self::binary_rel_promote_as(op, expr1, expr2, |e, _sz| Self::cast_bool(e), eval)
     }
 
-    pub fn load<E>(expr: E, size: u32, space: &AddressSpace) -> Term<Self>
+    pub fn load<E>(expr: E, size: u32, space: AddressSpaceId, address_bits: u32) -> Term<Self>
     where
         E: Into<Term<Self>>,
     {
-        Self::Load(
-            Self::cast_unsigned(expr, space.address_size() as u32 * 8),
-            size,
-            space.id(),
-        )
-        .into()
+        Self::Load(Self::cast_unsigned(expr, address_bits), size, space).into()
     }
 
     /*
@@ -1856,9 +1821,9 @@ impl Expr {
         let expr = expr.into();
         if let Self::Val(e, _) = &*expr {
             Self::val(if loff > 0 {
-                (e >> loff as u32).unsigned_cast((moff - loff) as usize)
+                (e >> loff).unsigned_cast(moff - loff)
             } else {
-                e.unsigned_cast((moff - loff) as usize)
+                e.unsigned_cast(moff - loff)
             })
         } else if loff == 0 && moff == expr.nbits() {
             expr
@@ -1984,7 +1949,7 @@ impl Expr {
             (Expr::Val(lv, _), Expr::Val(rv, _)) => Some(Expr::val(lv ^ rv)),
             (Expr::Val(v, _), _) if v.is_zero() => Some(r.clone()),
             (_, Expr::Val(v, _)) if v.is_zero() => Some(l.clone()),
-            _ if l == r => Some(Expr::val(BitVec::zero(l.nbits() as usize))),
+            _ if l == r => Some(Expr::val(BitVec::zero(l.nbits()))),
             _ => None,
         })
     }
@@ -2626,7 +2591,7 @@ impl Expr {
             (Expr::Val(lv, _), Expr::Val(rv, _)) => Some(Expr::val(lv ^ rv)),
             (Expr::Val(v, _), _) if v.is_zero() => Some(r.clone()),
             (_, Expr::Val(v, _)) if v.is_zero() => Some(l.clone()),
-            _ if l == r => Some(Expr::val(BitVec::zero(l.nbits() as usize))),
+            _ if l == r => Some(Expr::val(BitVec::zero(l.nbits()))),
             _ => None,
         })
     }
@@ -2650,24 +2615,6 @@ impl Expr {
         V: Into<Var>,
     {
         Self::Var(v.into()).into()
-    }
-}
-
-impl<'z> FromSpace<'z, Operand> for Expr {
-    fn from_space_with(
-        operand: Operand,
-        _arena: &'z IRBuilderArena,
-        manager: &SpaceManager,
-    ) -> Self {
-        Expr::from_space(operand, manager)
-    }
-
-    fn from_space(operand: Operand, manager: &SpaceManager) -> Self {
-        if let Operand::Constant { value, size, .. } = operand {
-            Expr::Val(BitVec::from_u64(value, size * 8), ValHint::CONSTANT)
-        } else {
-            Var::from_space(operand, manager).into()
-        }
     }
 }
 
@@ -3253,25 +3200,24 @@ impl Expr {
 #[cfg(test)]
 mod test {
     use fugue::bytes::{BE, LE};
-    use fugue::ir::AddressSpace;
 
     use super::*;
 
     #[test]
     fn test_canon() {
-        let spc = AddressSpace::unique("uniq", 0, None);
+        let spc = AddressSpaceId::unique_id(0);
 
         let x = Expr::int_add(
             Expr::int_add(
                 Expr::val(10u64),
                 Expr::int_mul(
                     Expr::int_add(Expr::val(99u32), Expr::val(1u32)),
-                    Expr::var(Var::new(&spc, 0, 32, 0)),
+                    Expr::var(Var::new(spc, 0, 32, 0)),
                 ),
             ),
             Expr::int_add(
                 Expr::concat(
-                    Expr::int_mul(Expr::var(Var::new(&spc, 4, 32, 0)), Expr::val(0u32)),
+                    Expr::int_mul(Expr::var(Var::new(spc, 4, 32, 0)), Expr::val(0u32)),
                     Expr::val(44u32),
                 ),
                 Expr::cast_unsigned(Expr::val(32u32), 64),
@@ -3292,7 +3238,7 @@ mod test {
             x,
             Expr::int_add(
                 Expr::cast_unsigned(
-                    Expr::int_mul(Expr::var(Var::new(&spc, 0, 32, 0)), Expr::val(100u32)),
+                    Expr::int_mul(Expr::var(Var::new(spc, 0, 32, 0)), Expr::val(100u32)),
                     64
                 ),
                 Expr::val(86u64),
@@ -3300,7 +3246,7 @@ mod test {
         );
         assert_eq!(y, Expr::val(185u32),);
 
-        let t = Expr::int_add(Expr::val(10), Expr::var(Var::new0(&spc, 0, 32)));
+        let t = Expr::int_add(Expr::val(10), Expr::var(Var::new0(spc, 0, 32)));
         let z = Expr::concat_with::<BE, _, _>(
             Expr::extract(t.clone(), 0, 16),
             Expr::concat_with::<BE, _, _>(

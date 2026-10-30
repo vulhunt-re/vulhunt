@@ -127,7 +127,7 @@ impl AliasValue {
     }
 
     pub fn stack_var(lifter: &Lifter) -> Self {
-        Self::S(BitVec::zero(lifter.address_bits() as _))
+        Self::S(BitVec::zero(lifter.address_bits()))
     }
 
     pub fn val(value: impl Into<BitVec>) -> Self {
@@ -136,7 +136,7 @@ impl AliasValue {
 
     pub fn reg(var: impl Into<Var>) -> Self {
         let var = var.into();
-        Self::R(var, BitVec::zero(var.nbits() as _))
+        Self::R(var, BitVec::zero(var.nbits()))
     }
 
     pub fn stack_delta(&self) -> Option<i64> {
@@ -369,7 +369,7 @@ impl AliasValue {
     pub fn extract(self, offset: usize, bytes: usize) -> Self {
         match self {
             Self::V(ref v) => {
-                let vbytes = v.bits() / 8;
+                let vbytes = v.bits() as usize / 8;
                 let nbytes = offset + bytes;
 
                 if nbytes > vbytes {
@@ -377,9 +377,9 @@ impl AliasValue {
                 }
 
                 if offset > 0 {
-                    Self::V((v >> (offset as u32 * 8)).unsigned_cast(bytes * 8))
+                    Self::V((v >> (offset as u32 * 8)).unsigned_cast(bytes as u32 * 8))
                 } else {
-                    Self::V(v.unsigned_cast(bytes * 8))
+                    Self::V(v.unsigned_cast(bytes as u32 * 8))
                 }
             }
             Self::S(bv) => {
@@ -401,14 +401,14 @@ impl AliasValue {
         match self {
             Self::V(mut v) => match val {
                 None => {
-                    v.unsigned_cast_assign(bytes * 8);
+                    v.unsigned_cast_assign(bytes as u32 * 8);
                     if offset > 0 {
                         v <<= offset as u32 * 8;
                     }
                     *val = Some(Self::V(v));
                 }
                 Some(Self::V(old)) => {
-                    let nbits = bytes * 8;
+                    let nbits = bytes as u32 * 8;
 
                     if old.bits() == v.bits() && offset == 0 {
                         v.unsigned_cast_assign(nbits);
@@ -496,8 +496,8 @@ impl<'a> AliasVisitorContext<'a> {
 
             stack_pointer,
             extra_pop: BitVec::from_u64(
-                lifter.default_prototype().extra_pop(),
-                stack_pointer.nbits() as _,
+                lifter.default_prototype().extra_pop().unwrap_or(0),
+                stack_pointer.nbits(),
             ),
         }
     }
@@ -544,8 +544,8 @@ impl<'a> AliasVisitorContext<'a> {
                     rvar.address()
                         .map(|addr| {
                             AliasValue::ptr0(
-                                BitVec::from_u64(addr.offset(), self.stack_pointer.nbits() as _),
-                                BitVec::zero(self.stack_pointer.nbits() as _),
+                                BitVec::from_u64(addr.offset(), self.stack_pointer.nbits()),
+                                BitVec::zero(self.stack_pointer.nbits()),
                             )
                         })
                         .unwrap_or(AliasValue::Top)
@@ -635,7 +635,7 @@ impl<'a> AliasVisitorContext<'a> {
                 {
                     sv
                 } else {
-                    AliasValue::ptr(pval, BitVec::zero(self.stack_pointer.nbits() as _))
+                    AliasValue::ptr(pval, BitVec::zero(self.stack_pointer.nbits()))
                 }
             }
             Expr::Concat(lexpr, rexpr) => {
@@ -726,7 +726,7 @@ impl<'a> AliasVisitorContext<'a> {
             }
             Expr::Cast(expr, t) => {
                 let v = self.eval_expr(expr);
-                let t_bits = t.nbits() as usize;
+                let t_bits = t.nbits();
 
                 if t.is_bool() {
                     AliasValue::lift1_val(v, |v| BitVec::from(if v.is_zero() { 0u8 } else { 1u8 }))

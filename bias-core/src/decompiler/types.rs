@@ -883,8 +883,8 @@ impl<'a> DataTypeRef<'a> {
                         };
                         EnumVariant::new(
                             name,
-                            value.signed_cast(size * 8),
-                            value.unsigned_cast(size * 8),
+                            value.signed_cast(size as u32 * 8),
+                            value.unsigned_cast(size as u32 * 8),
                         )
                     });
 

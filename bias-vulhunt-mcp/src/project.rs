@@ -617,7 +617,7 @@ impl VulHuntProject {
     ) -> Result<VulHuntSignatureLoadResult, VulHuntProjectError> {
         let attributes = self.component.container();
         let path = attributes.get_attr::<SourceFilePath>().expect("present");
-        let arch = self.project.lifter().translator().architecture();
+        let arch = self.project.lifter().architecture();
 
         let mut signature_files = Vec::new();
 
@@ -625,7 +625,7 @@ impl VulHuntProject {
             let mut arch_map = flirt_arch_lib_lookup(&entry, &self.symbol_manager)
                 .map_err(|e| VulHuntProjectError::signature_resolution(&path, entry, e))?;
 
-            if let Some(files) = arch_map.remove(arch) {
+            if let Some(files) = arch_map.remove(&arch) {
                 signature_files.extend(files.into_iter());
             }
         }

@@ -1,6 +1,5 @@
 use ahash::{AHashMap, AHashSet};
 use fugue::bv::BitVec;
-use fugue::ir::il::traits::TranslatorDisplay;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
@@ -22,6 +21,7 @@ use crate::eval::{
     Access, AccessKind, Bound, Configuration as EvalConfiguration, IREvaluator, ObserverContext,
 };
 use crate::ir::expr::rewriter::{ExprRewriter, DEFAULT_RULES};
+use crate::ir::traits::LanguageDisplay;
 use crate::ir::{Address, BitSize, Expr, Location, Term, Var};
 use crate::kb::block::CodeBlockId;
 use crate::kb::function::FunctionInfo;
@@ -234,7 +234,7 @@ impl<'a> TableRecovery<'a> {
 
                 tracing::info!(
                     "table bound estimated to be {vals} for {} (size: {})",
-                    var.display_with(Some(project.lifter.translator())),
+                    var.display_with(Some(project.lifter.language())),
                     hint.unwrap(),
                 );
                 Some((starts, var, mv, it))
@@ -321,7 +321,7 @@ impl<'a> TableRecovery<'a> {
 
                 tracing::info!(
                     "table bound estimated to be {vals} for {} (size: {})",
-                    var.display_with(Some(project.lifter.translator())),
+                    var.display_with(Some(project.lifter.language())),
                     hint.unwrap(),
                 );
                 Some((addr, var, mv, it))
@@ -448,7 +448,7 @@ impl<'a> TableRecovery<'a> {
                 if let Some((expr, bits)) = &mv {
                     tracing::trace!(
                         "overriding load via {} with {:x}",
-                        expr.display_with(Some(context.lifter.translator())),
+                        expr.display_with(Some(context.lifter.language())),
                         init
                     );
 
@@ -460,7 +460,7 @@ impl<'a> TableRecovery<'a> {
                 } else {
                     tracing::trace!(
                         "setting {} to {:x}",
-                        cond_var.display_with(Some(context.lifter.translator())),
+                        cond_var.display_with(Some(context.lifter.language())),
                         init
                     );
 
@@ -621,8 +621,10 @@ impl<'a> TableRecovery<'a> {
 
                             if let AccessKind::Load(ref bv) = all_tracked[j].kind {
                                 let conv = |bv: &BitVec| {
-                                    bv.signed_cast(context.lifter.global_space().address_size() * 8)
-                                        .to_u64()
+                                    bv.signed_cast(
+                                        context.lifter.language().address_size() as u32 * 8,
+                                    )
+                                    .to_u64()
                                 };
 
                                 if let Some(sbv) = conv(bv) {

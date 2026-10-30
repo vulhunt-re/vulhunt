@@ -10,7 +10,7 @@ use crate::decompiler::annotation::DecompilerAnnotationDB;
 use crate::decompiler::ffi::HighVarWithType;
 pub use crate::decompiler::ffi::{JumpTableInfo, LoadTableInfo};
 use crate::decompiler::types::{DataTypeRef, SpaceKind};
-use crate::decompiler::DecompilerError;
+use crate::decompiler::{is_register, DecompilerError};
 use crate::prelude::*;
 
 #[derive(Debug, Clone)]
@@ -87,14 +87,9 @@ impl<'a> HighVarRef<'a> {
     pub fn variable(&self, lifter: &Lifter) -> Option<Var> {
         match self.0.space {
             SpaceKind::Register => {
-                if lifter
-                    .translator()
-                    .registers()
-                    .get(self.0.offset, self.0.size as _)
-                    .is_some()
-                {
+                if is_register(lifter, self.0.offset, self.0.size) {
                     Some(Var::new0(
-                        lifter.register_space(),
+                        lifter.register_space_id(),
                         self.0.offset,
                         self.nbits(),
                     ))
@@ -103,7 +98,7 @@ impl<'a> HighVarRef<'a> {
                 }
             }
             SpaceKind::Unique => Some(Var::new0(
-                lifter.temporary_space(),
+                lifter.temporary_space_id(),
                 self.0.offset,
                 self.nbits(),
             )),

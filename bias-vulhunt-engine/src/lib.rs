@@ -393,7 +393,7 @@ fn extract_arch(full_path: &Path) -> Result<Vec<ArchitectureDef>, CheckerError> 
     };
 
     let bits = bits
-        .parse::<usize>()
+        .parse::<u32>()
         .map_err(|_| CheckerError::SignatureArch(full_path.display().to_string()))?;
 
     if let Some(variant) = variant {

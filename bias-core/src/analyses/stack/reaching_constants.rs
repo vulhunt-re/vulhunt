@@ -230,8 +230,8 @@ impl<'a> ReachingStackConstsVisitor<'a> {
             stack_accesses,
             stack_pointer,
             extra_pop: BitVec::from_u64(
-                lifter.default_prototype().extra_pop(),
-                stack_pointer.nbits() as _,
+                lifter.default_prototype().extra_pop().unwrap_or(0),
+                stack_pointer.nbits(),
             ),
         }
     }
@@ -512,7 +512,7 @@ impl BlockReachingStackConsts {
             if let Some((last_off, last_buf)) = regions.last_mut() {
                 let last_len = last_buf.len();
                 if *last_off + last_len as i64 == off {
-                    last_buf.extend(std::iter::repeat(0u8).take(val.bits() / 8));
+                    last_buf.extend(std::iter::repeat_n(0u8, val.bits() as usize / 8));
                     if project.lifter().endian().is_big() {
                         val.to_be_bytes(&mut last_buf[last_len..]);
                     } else {
@@ -523,7 +523,7 @@ impl BlockReachingStackConsts {
                 }
             }
 
-            let mut buf = vec![0u8; val.bits() / 8];
+            let mut buf = vec![0u8; val.bits() as usize / 8];
             if project.lifter().endian().is_big() {
                 val.to_be_bytes(&mut buf);
             } else {

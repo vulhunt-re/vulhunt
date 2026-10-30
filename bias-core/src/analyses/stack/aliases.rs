@@ -2,7 +2,7 @@ use std::collections::hash_map::Entry;
 use std::fmt::Display;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 
-use fugue::ir::convention::PrototypeOperand;
+use fugue::lifter::runtime::convention::PrototypeOperand;
 use petgraph::visit::{EdgeRef, IntoEdgesDirected, VisitMap, Visitable};
 use petgraph::EdgeDirection;
 
@@ -78,7 +78,7 @@ impl StackRefValue {
     }
 
     pub fn stack_var(lifter: &Lifter) -> Self {
-        Self::Var(BitVec::zero(lifter.address_bits() as _))
+        Self::Var(BitVec::zero(lifter.address_bits()))
     }
 
     pub fn val(value: impl Into<BitVec>) -> Self {
@@ -266,9 +266,9 @@ impl StackAccesses {
         let call_state = self.call_state_at(location)?;
 
         match operand {
-            PrototypeOperand::Register { varnode, .. } => {
+            PrototypeOperand::Register(varnode) => {
                 let var = Var::new0(
-                    lifter.register_space(),
+                    lifter.register_space_id(),
                     varnode.offset(),
                     varnode.size() as u32 * 8,
                 );
@@ -277,7 +277,7 @@ impl StackAccesses {
 
                 call_state.get(&avar).copied()
             }
-            PrototypeOperand::StackRelative(offset) => {
+            PrototypeOperand::StackRelative { offset, .. } => {
                 let stack_pointer = *call_state.get(&lifter.stack_pointer())?;
                 Some(stack_pointer + *offset as i64)
             }
@@ -327,8 +327,8 @@ impl<'a> StackAccessVisitor<'a> {
             registers: &*lifter.register_map(),
             stack_pointer,
             extra_pop: BitVec::from_u64(
-                lifter.default_prototype().extra_pop(),
-                stack_pointer.nbits() as _,
+                lifter.default_prototype().extra_pop().unwrap_or(0),
+                stack_pointer.nbits(),
             ),
         }
     }
@@ -646,7 +646,7 @@ fn incoming_map(
             let avar = lifter.register_map().parent(&reg).unwrap_or(reg);
             let value = (reg != avar)
                 .then(|| {
-                    let mut val = val.unsigned_cast(avar.nbits() as _);
+                    let mut val = val.unsigned_cast(avar.nbits());
                     let voff = (reg.offset() - avar.offset()) as u32 * 8;
                     if voff != 0 {
                         val <<= voff;
@@ -678,8 +678,8 @@ impl<'a> StackRefVisitor<'a> {
             tmapping: AHashMap::new(),
             stack_pointer,
             extra_pop: BitVec::from_u64(
-                lifter.default_prototype().extra_pop(),
-                stack_pointer.nbits() as _,
+                lifter.default_prototype().extra_pop().unwrap_or(0),
+                stack_pointer.nbits(),
             ),
         }
     }

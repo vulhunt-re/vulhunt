@@ -4,7 +4,6 @@ use std::fmt::Display;
 use std::mem::{swap, take};
 
 use fugue::bv::BitVec;
-use fugue::ir::Address;
 use thiserror::Error;
 
 use super::globals::{GlobalsAnalyser, EFI_GLOBALS_ANALYSIS};
@@ -24,7 +23,7 @@ use crate::eval::resolver::{CallSiteResolver, DataResolver, ResolverError};
 use crate::eval::strategy::xforce::XForceStrategy;
 use crate::eval::{Bound, Configuration, IRContext, IREvaluator};
 use crate::ir::types::StructField;
-use crate::ir::{BinOp, Expr, InsnTarget, Location, Stmt, Term, ToAddress, Type, Var};
+use crate::ir::{Address, BinOp, Expr, InsnTarget, Location, Stmt, Term, ToAddress, Type, Var};
 use crate::kb::id::Identifiable;
 use crate::kb::{ustr, uuid, Lazy, Ustr, Uuid};
 use crate::lifter::DefaultPrototype;
@@ -954,7 +953,7 @@ impl ObserveTableWrite {
                 return false;
             };
 
-            let aval = BitVec::from_u64(naddr.offset(), value.nbits() as usize);
+            let aval = BitVec::from_u64(naddr.offset(), value.nbits());
 
             if *value != aval {
                 *value = aval;
@@ -1082,7 +1081,7 @@ impl ServicesAnalyser {
         type_str: &'static str,
         guid_str: &'static str,
     ) -> Result<(), AnalysisError> {
-        let addr_bytes = project.lifter().global_space().address_size();
+        let addr_bytes = project.lifter().language().address_size();
         let addr_bits = addr_bytes as u32 * 8;
 
         let Some(idx) = guids.guid_db().get_index(guid_str) else {
@@ -1249,7 +1248,7 @@ impl Analysis for ServicesAnalyser {
 
         let guid_db = guids.guid_db().clone();
 
-        let addr_bytes = project.lifter().global_space().address_size();
+        let addr_bytes = project.lifter().language().address_size();
         let addr_bits = addr_bytes as u32 * 8;
 
         let bs = project
@@ -1422,10 +1421,7 @@ impl Analysis for ServicesAnalyser {
 
                     if blk.address() == entry {
                         eval.context_mut()
-                            .write_var(
-                                &arg1,
-                                &BitVec::from_u64(pei_paddr.into(), addr_bits as usize),
-                            )
+                            .write_var(&arg1, &BitVec::from_u64(pei_paddr.into(), addr_bits))
                             .map_err(Error::from)?;
                     }
 
@@ -1446,10 +1442,7 @@ impl Analysis for ServicesAnalyser {
 
                         if start == entry {
                             eval.context_mut()
-                                .write_var(
-                                    &arg1,
-                                    &BitVec::from_u64(pei_paddr.into(), addr_bits as usize),
-                                )
+                                .write_var(&arg1, &BitVec::from_u64(pei_paddr.into(), addr_bits))
                                 .map_err(Error::from)?;
                         }
 
@@ -2261,9 +2254,9 @@ impl<'a> BlockAnalyser<'a> {
                             sp + self
                                 .project
                                 .lifter
-                                .convention()
                                 .default_prototype()
-                                .extra_pop(),
+                                .extra_pop()
+                                .unwrap_or(0),
                         )?;
                     }
                 }

@@ -4,7 +4,7 @@ use std::process::exit;
 
 use bias_core::caches;
 use bias_core::decompiler::compiler::SleighCompiler;
-use bias_core::fugue::ir::LanguageDB;
+use bias_core::fugue::sleigh::language::LanguageDB;
 
 use clap::{Arg, Command};
 use tracing_subscriber::EnvFilter;

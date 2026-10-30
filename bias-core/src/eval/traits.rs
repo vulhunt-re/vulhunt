@@ -1,8 +1,7 @@
 use fugue::bv::BitVec;
-use fugue::ir::Address;
 
 use super::IRContext;
-use crate::ir::Var;
+use crate::ir::{Address, Var};
 use crate::lifter::PrototypeResolver;
 
 pub trait VarResolve {

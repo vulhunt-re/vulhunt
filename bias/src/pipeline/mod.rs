@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use ahash::AHashMap;
 
-use bias_core::fugue::ir::LanguageDB;
+use bias_core::fugue::sleigh::language::LanguageDB;
 use bias_core::inject::InjectionFixupError;
 use bias_core::project::analysis::AnalysisError;
 use bias_core::Project;

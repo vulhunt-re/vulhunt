@@ -210,7 +210,7 @@ impl AliasValue {
     }
 
     pub fn stack_var(lifter: &Lifter) -> Self {
-        Self::S(BitVec::zero(lifter.address_bits() as _))
+        Self::S(BitVec::zero(lifter.address_bits()))
     }
 
     pub fn sym(named: impl Into<NamedValue>) -> Self {
@@ -464,7 +464,7 @@ impl AliasValue {
     pub fn extract(self, offset: usize, bytes: usize) -> Self {
         match self {
             Self::V(ref v) => {
-                let vbytes = v.bits() / 8;
+                let vbytes = v.bits() as usize / 8;
                 let nbytes = offset + bytes;
 
                 if nbytes > vbytes {
@@ -472,9 +472,9 @@ impl AliasValue {
                 }
 
                 if offset > 0 {
-                    Self::V((v >> (offset as u32 * 8)).unsigned_cast(bytes * 8))
+                    Self::V((v >> (offset as u32 * 8)).unsigned_cast(bytes as u32 * 8))
                 } else {
-                    Self::V(v.unsigned_cast(bytes * 8))
+                    Self::V(v.unsigned_cast(bytes as u32 * 8))
                 }
             }
             Self::S(bv) => {
@@ -493,14 +493,14 @@ impl AliasValue {
         match self {
             Self::V(mut v) => match val {
                 None => {
-                    v.unsigned_cast_assign(bytes * 8);
+                    v.unsigned_cast_assign(bytes as u32 * 8);
                     if offset > 0 {
                         v <<= offset as u32 * 8;
                     }
                     *val = Some(Self::V(v));
                 }
                 Some(Self::V(old)) => {
-                    let nbits = bytes * 8;
+                    let nbits = bytes as u32 * 8;
 
                     if old.bits() == v.bits() && offset == 0 {
                         v.unsigned_cast_assign(nbits);
@@ -1092,7 +1092,7 @@ impl<'a> AliasTypingContext<'a> {
                     let pvar = self.lifter.register_map().parent(var).unwrap_or(*var);
                     let pval = (pvar != *var)
                         .then(|| {
-                            let mut val = val.unsigned_cast(pvar.nbits() as _);
+                            let mut val = val.unsigned_cast(pvar.nbits());
                             let voff = (var.offset() - pvar.offset()) as u32 * 8;
                             if voff != 0 {
                                 val <<= voff;
@@ -1121,7 +1121,7 @@ impl<'a> AliasTypingContext<'a> {
             if let Some((last_off, last_buf)) = regions.last_mut() {
                 let last_len = last_buf.len();
                 if *last_off + last_len as i64 == *off {
-                    last_buf.extend(std::iter::repeat(0u8).take(val.bits() / 8));
+                    last_buf.extend(std::iter::repeat_n(0u8, val.bits() as usize / 8));
                     if self.lifter.endian().is_big() {
                         val.to_be_bytes(&mut last_buf[last_len..]);
                     } else {
@@ -1132,7 +1132,7 @@ impl<'a> AliasTypingContext<'a> {
                 }
             }
 
-            let mut buf = vec![0u8; val.bits() / 8];
+            let mut buf = vec![0u8; val.bits() as usize / 8];
             if self.lifter.endian().is_big() {
                 val.to_be_bytes(&mut buf);
             } else {
@@ -1318,7 +1318,8 @@ impl<'a> AliasTypingContext<'a> {
 
     #[inline]
     pub fn update_output(&mut self, index: usize, v: TypedAliasValue) -> bool {
-        match self.lifter.default_prototype().output_operand(index) {
+        let prototype = self.lifter.default_prototype();
+        match prototype.output_operand(index) {
             Some(Operand::Register(r)) => {
                 self.registers.insert(r, v);
                 true
@@ -1333,7 +1334,7 @@ impl<'a> AliasTypingContext<'a> {
                 };
                 let delta = d
                     .wrapping_add(shift)
-                    .wrapping_sub(self.lifter.default_prototype().extra_pop() as i64);
+                    .wrapping_sub(prototype.extra_pop().unwrap_or(0) as i64);
 
                 self.stack_variables.insert(delta, v);
                 true
@@ -1344,7 +1345,8 @@ impl<'a> AliasTypingContext<'a> {
 
     #[inline]
     pub fn update_input(&mut self, index: usize, v: TypedAliasValue) -> bool {
-        match self.lifter.default_prototype().input_operand(index) {
+        let prototype = self.lifter.default_prototype();
+        match prototype.input_operand(index) {
             Some(Operand::Register(r)) => {
                 self.registers.insert(r, v);
                 true
@@ -1359,7 +1361,7 @@ impl<'a> AliasTypingContext<'a> {
                 };
                 let delta = d
                     .wrapping_add(shift)
-                    .wrapping_sub(self.lifter.default_prototype().extra_pop() as i64);
+                    .wrapping_sub(prototype.extra_pop().unwrap_or(0) as i64);
 
                 self.stack_variables.insert(delta, v);
                 true
@@ -1369,7 +1371,8 @@ impl<'a> AliasTypingContext<'a> {
     }
 
     pub fn input_origin(&self, index: usize) -> Option<AliasOrigin> {
-        match self.lifter.default_prototype().input_operand(index)? {
+        let prototype = self.lifter.default_prototype();
+        match prototype.input_operand(index)? {
             Operand::Register(r) => Some(AliasOrigin::new_before_for(self.location, &r, index + 1)),
             Operand::Stack(d, _) => {
                 let shift = self
@@ -1378,7 +1381,7 @@ impl<'a> AliasTypingContext<'a> {
                     .and_then(|vt| vt.v.stack_delta())?;
                 let delta = d
                     .wrapping_add(shift)
-                    .wrapping_sub(self.lifter.default_prototype().extra_pop() as i64);
+                    .wrapping_sub(prototype.extra_pop().unwrap_or(0) as i64);
                 Some(AliasOrigin::new_before_for(self.location, delta, index + 1))
             }
             _ => None,
@@ -1390,7 +1393,8 @@ impl<'a> AliasTypingContext<'a> {
             return None;
         }
 
-        match self.lifter.default_prototype().output_operand(index)? {
+        let prototype = self.lifter.default_prototype();
+        match prototype.output_operand(index)? {
             Operand::Register(r) => Some(AliasOrigin::new_before_for(self.location, &r, index)),
             Operand::Stack(d, _) => {
                 let shift = self
@@ -1399,7 +1403,7 @@ impl<'a> AliasTypingContext<'a> {
                     .and_then(|vt| vt.v.stack_delta())?;
                 let delta = d
                     .wrapping_add(shift)
-                    .wrapping_sub(self.lifter.default_prototype().extra_pop() as i64);
+                    .wrapping_sub(prototype.extra_pop().unwrap_or(0) as i64);
                 Some(AliasOrigin::new_before_for(self.location, delta, index))
             }
             _ => None,
@@ -1408,7 +1412,8 @@ impl<'a> AliasTypingContext<'a> {
 
     #[inline]
     pub fn input_operand(&self, index: usize) -> Option<&TypedAliasValue> {
-        match self.lifter.default_prototype().input_operand(index)? {
+        let prototype = self.lifter.default_prototype();
+        match prototype.input_operand(index)? {
             Operand::Register(r) => self.registers.get(&r),
             Operand::Stack(d, _) => {
                 let shift = self
@@ -1417,7 +1422,7 @@ impl<'a> AliasTypingContext<'a> {
                     .and_then(|vt| vt.v.stack_delta())?;
                 let delta = d
                     .wrapping_add(shift)
-                    .wrapping_sub(self.lifter.default_prototype().extra_pop() as i64);
+                    .wrapping_sub(prototype.extra_pop().unwrap_or(0) as i64);
 
                 self.stack_variables.get(&delta)
             }
@@ -1437,7 +1442,8 @@ impl<'a> AliasTypingContext<'a> {
 
     #[inline]
     pub fn output_operand(&self, index: usize) -> Option<&TypedAliasValue> {
-        match self.lifter.default_prototype().output_operand(index)? {
+        let prototype = self.lifter.default_prototype();
+        match prototype.output_operand(index)? {
             Operand::Register(r) => self.registers.get(&r),
             Operand::Stack(d, _) => {
                 let shift = self
@@ -1446,7 +1452,7 @@ impl<'a> AliasTypingContext<'a> {
                     .and_then(|vt| vt.v.stack_delta())?;
                 let delta = d
                     .wrapping_add(shift)
-                    .wrapping_sub(self.lifter.default_prototype().extra_pop() as i64);
+                    .wrapping_sub(prototype.extra_pop().unwrap_or(0) as i64);
 
                 self.stack_variables.get(&delta)
             }
@@ -1967,8 +1973,8 @@ where
             type_resolver,
             stack_pointer,
             extra_pop: BitVec::from_u64(
-                lifter.default_prototype().extra_pop(),
-                stack_pointer.nbits() as _,
+                lifter.default_prototype().extra_pop().unwrap_or(0),
+                stack_pointer.nbits(),
             ),
         }
     }
@@ -2083,9 +2089,9 @@ where
     ) {
         let origin = origin.into();
         match operand {
-            PrototypeOperand::Register { varnode, .. } => {
+            PrototypeOperand::Register(varnode) => {
                 let var = Var::new0(
-                    self.lifter.register_space(),
+                    self.lifter.register_space_id(),
                     varnode.offset(),
                     varnode.size() as u32 * 8,
                 );
@@ -2148,13 +2154,13 @@ where
                     */
                 }
             }
-            PrototypeOperand::StackRelative(offset) => {
+            PrototypeOperand::StackRelative { offset, .. } => {
                 if let Some(stack_base) = self
                     .rmapping
                     .get(&self.stack_pointer)
                     .and_then(|vt| vt.v.value())
                 {
-                    let mut shifted = BitVec::from_u64(*offset, self.stack_pointer.nbits() as _);
+                    let mut shifted = BitVec::from_u64(*offset, self.stack_pointer.nbits());
                     shifted += stack_base;
 
                     if let Some(shift) = shifted.signed_cast(64).to_i64() {
@@ -2307,8 +2313,8 @@ where
                         .address()
                         .map(|addr| {
                             AliasValue::ptr0(
-                                BitVec::from_u64(addr.offset(), self.stack_pointer.nbits() as _),
-                                BitVec::zero(self.stack_pointer.nbits() as _),
+                                BitVec::from_u64(addr.offset(), self.stack_pointer.nbits()),
+                                BitVec::zero(self.stack_pointer.nbits()),
                             )
                         })
                         .unwrap_or(AliasValue::Top);
@@ -2541,7 +2547,7 @@ where
 
                     return TypedAliasValue::new(sv.extract(0, bytes), t.extract(0, bytes), o);
                 } else {
-                    AliasValue::ptr(pval, BitVec::zero(self.stack_pointer.nbits() as _))
+                    AliasValue::ptr(pval, BitVec::zero(self.stack_pointer.nbits()))
                 };
 
                 TypedAliasValue::new(val, t, *loc)
@@ -2645,14 +2651,14 @@ where
             Expr::UnRel(_, _expr) => TypedAliasValue::typed_top(Type::bool(), *loc),
             Expr::Cast(expr, t) => {
                 let v = self.eval_expr(loc, expr).resolve_named(self);
-                let t_bits = t.nbits() as usize;
+                let t_bits = t.nbits();
 
                 let v_cast = if t.is_bool() {
                     AliasValue::lift1_val(v.v, |v| {
                         BitVec::from(if v.is_zero() { 0u8 } else { 1u8 })
                     })
                 } else if v.v.is_sym()
-                    && matches!(v.t.type_value(), Some(tn) if tn.nbits() as usize <= t_bits)
+                    && matches!(v.t.type_value(), Some(tn) if tn.nbits() <= t_bits)
                 {
                     v.v
                 } else if t.is_unsigned() {
@@ -2664,7 +2670,7 @@ where
                                         v.unsigned_cast_assign(t_bits);
                                         v
                                     }),
-                                    t: AliasType::unsigned(t_bits as u32),
+                                    t: AliasType::unsigned(t_bits),
                                     o: stack_alias.o.to_owned(),
                                 };
 
@@ -3710,7 +3716,7 @@ impl<'a> Display for CallSiteContextDisplay<'a> {
         for (var, vt) in self.aliases.registers() {
             let v = &vt.v;
             let t = &vt.t;
-            let name = var.display_with(Some(self.project.lifter().translator()));
+            let name = var.display_with(Some(self.project.lifter().language()));
             writeln!(f, "{name} = {v} ({t})")?;
         }
 
@@ -3733,7 +3739,7 @@ impl<'a> Display for TypedBlockAliasesDisplay<'a> {
         for (var, vt) in self.aliases.incoming() {
             let v = &vt.v;
             let t = &vt.t;
-            let name = var.display_with(Some(self.project.lifter().translator()));
+            let name = var.display_with(Some(self.project.lifter().language()));
             writeln!(f, "{name} = {v} ({t})")?;
         }
 
@@ -3742,7 +3748,7 @@ impl<'a> Display for TypedBlockAliasesDisplay<'a> {
         for (var, vt) in self.aliases.outgoing() {
             let v = &vt.v;
             let t = &vt.t;
-            let name = var.display_with(Some(self.project.lifter().translator()));
+            let name = var.display_with(Some(self.project.lifter().language()));
             writeln!(f, "{name} = {v} ({t})")?;
         }
 
@@ -4663,7 +4669,7 @@ where
             let mut delta = delta.to_owned();
 
             let xpop = BitVec::from_i64(
-                context.lifter.default_prototype().extra_pop() as i64,
+                context.lifter.default_prototype().extra_pop().unwrap_or(0) as i64,
                 delta.bits(),
             );
             let nspd = BitVec::from_i64(offset, delta.bits());
@@ -4792,7 +4798,7 @@ where
                         }
                     }
                 }
-                let xpop = context.lifter.default_prototype().extra_pop() as i64;
+                let xpop = context.lifter.default_prototype().extra_pop().unwrap_or(0) as i64;
 
                 for (spd, vt) in ctx.outgoing_stack() {
                     let nspd = spd.wrapping_sub(spd_shift).wrapping_sub(xpop);

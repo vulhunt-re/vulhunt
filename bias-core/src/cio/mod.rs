@@ -9,14 +9,13 @@ use std::sync::Arc;
 
 use ahash::AHashMap;
 use fugue::bv::BitVec;
-use fugue::ir::Address;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use thiserror::Error;
 use ustr::{Ustr, UstrMap};
 
 use crate::ir::types::{EnumVariant, FunctionArgProps, StructField, UnionVariant};
-use crate::ir::{Term, Type, TypeKind};
+use crate::ir::{Address, Term, Type, TypeKind};
 
 #[cfg(feature = "import-c")]
 pub mod clang;

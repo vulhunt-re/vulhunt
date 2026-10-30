@@ -1,9 +1,8 @@
-use fugue::ir::Translator;
+use fugue::lifter::runtime::language::Language;
 
-use super::{Arch, ErasedArch, FunctionThunkTemplate};
+use super::{register_var, Arch, ErasedArch, FunctionThunkTemplate};
 use crate::ir::Var;
 use crate::kb::{uuid, Uuid};
-use crate::lifter::TranslatorExt;
 
 #[derive(Copy, Clone, Default)]
 pub struct XTENSA;
@@ -15,32 +14,32 @@ impl Arch for XTENSA {
         ARCH_XTENSA
     }
 
-    fn gprs(&self, translator: &Translator) -> Vec<Var> {
+    fn gprs(&self, language: &'static Language) -> Vec<Var> {
         || -> Option<Vec<Var>> {
             Some(vec![
-                translator.register_var("a0")?,
-                translator.register_var("a1")?,
-                translator.register_var("a2")?,
-                translator.register_var("a3")?,
-                translator.register_var("a4")?,
-                translator.register_var("a5")?,
-                translator.register_var("a6")?,
-                translator.register_var("a7")?,
-                translator.register_var("a8")?,
-                translator.register_var("a9")?,
-                translator.register_var("a10")?,
-                translator.register_var("a11")?,
-                translator.register_var("a12")?,
-                translator.register_var("a13")?,
-                translator.register_var("a14")?,
-                translator.register_var("a15")?,
+                register_var(language, "a0")?,
+                register_var(language, "a1")?,
+                register_var(language, "a2")?,
+                register_var(language, "a3")?,
+                register_var(language, "a4")?,
+                register_var(language, "a5")?,
+                register_var(language, "a6")?,
+                register_var(language, "a7")?,
+                register_var(language, "a8")?,
+                register_var(language, "a9")?,
+                register_var(language, "a10")?,
+                register_var(language, "a11")?,
+                register_var(language, "a12")?,
+                register_var(language, "a13")?,
+                register_var(language, "a14")?,
+                register_var(language, "a15")?,
             ])
         }()
         .unwrap_or_default()
     }
 
-    fn external_thunk_template(&self, translator: &Translator) -> FunctionThunkTemplate {
-        let bytes = if translator.architecture().is_big() {
+    fn external_thunk_template(&self, language: &'static Language) -> FunctionThunkTemplate {
+        let bytes = if language.insn_endian().is_big() {
             [0x02, 0x00, 0x00]
         } else {
             [0x80, 0x00, 0x00]

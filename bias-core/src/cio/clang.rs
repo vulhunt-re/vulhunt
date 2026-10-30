@@ -386,7 +386,7 @@ impl<'a> TranslationUnitMulti<'a> {
     }
 
     fn enum_variants<'b>(enumer: &'b Entity<'b>) -> Arc<[EnumVariant]> {
-        let bits = enumer.get_type().unwrap().get_sizeof().unwrap() * 8;
+        let bits = (enumer.get_type().unwrap().get_sizeof().unwrap() * 8) as u32;
         enumer
             .get_children()
             .iter()

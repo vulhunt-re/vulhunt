@@ -1,5 +1,5 @@
-use fugue::fspec::common::{GroupOrValueVisitor, Language};
-use fugue::fspec::{FunctionProperties, FunctionSpec, PlatformConstraint};
+use fugue::specs::common::{GroupOrValueVisitor, LanguageSpec, PlatformConstraint};
+use fugue::specs::{FunctionProperties, FunctionSpec};
 use ustr::{Ustr, UstrSet};
 
 use super::icfg::Configuration;
@@ -10,14 +10,14 @@ use crate::symbols::{Symbolise, SymboliseError};
 use crate::Project;
 
 struct ArchWithPlatform<'a> {
-    arch: Language,
+    arch: LanguageSpec,
     platform: Option<&'a str>,
 }
 
 impl GroupOrValueVisitor<PlatformConstraint> for ArchWithPlatform<'_> {
     fn matches_value(&self, value: &PlatformConstraint) -> bool {
         match value {
-            PlatformConstraint::Arch(arch) => arch.matches(&self.arch),
+            PlatformConstraint::Language(arch) => arch.matches(&self.arch),
             PlatformConstraint::Platform(platform) => {
                 self.platform.map(|p| p == platform).unwrap_or(true)
             }
@@ -34,14 +34,14 @@ pub struct FunctionSpecManager<'a> {
 
 impl<'a> FunctionSpecManager<'a> {
     pub fn new(config: &'a Configuration<'_>, lifter: &Lifter) -> Self {
-        let arch = lifter.translator().architecture();
+        let language = lifter.language();
         let conv = lifter.convention().name();
         let selector = ArchWithPlatform {
-            arch: Language::new_with(
-                arch.processor(),
-                arch.endian(),
-                arch.bits() as u32,
-                arch.variant().to_owned(),
+            arch: LanguageSpec::new_with(
+                language.processor(),
+                lifter.endian(),
+                language.bits(),
+                language.variant().to_owned(),
                 conv.to_owned(),
             ),
             platform: config.platform,
@@ -52,11 +52,11 @@ impl<'a> FunctionSpecManager<'a> {
         let mut named_return_thunks = UstrSet::default();
 
         for spec in config.use_function_specifications.iter() {
-            if !spec.matches(&selector) {
+            if !spec.can_match(&selector) {
                 continue;
             }
 
-            for fspec in spec.functions_matching(&selector) {
+            for fspec in spec.functions().iter().filter(|f| f.matches(&selector)) {
                 tracing::trace!("adding specification for {}", fspec.name());
                 specs.push(fspec);
 

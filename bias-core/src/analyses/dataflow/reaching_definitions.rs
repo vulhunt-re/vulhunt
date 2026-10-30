@@ -3,12 +3,11 @@ use std::sync::Arc;
 
 use ahash::{AHashMap as Map, AHashSet as Set};
 use fixedbitset::FixedBitSet;
-use fugue::ir::Address;
 use indexmap::IndexMap;
 use petgraph::visit::EdgeRef;
 use petgraph::EdgeDirection;
 
-use crate::ir::{Location, Var, VarView, Variable, VarsVisitor, VisitVars};
+use crate::ir::{Address, Location, Var, VarView, Variable, VarsVisitor, VisitVars};
 use crate::kb::block::CodeBlockId;
 use crate::kb::function::{Function, FunctionId};
 use crate::kb::id::Identifiable;
@@ -212,8 +211,8 @@ impl ReachingDefsVisitor {
         f: &Function,
     ) -> FunctionReachingDefs {
         let aliases = if let Some(register) = register_aliases {
-            let mut global = VarView::new(project.lifter.translator().manager().default_space_id());
-            let mut stack = VarView::new(project.lifter.translator().manager().default_space_id());
+            let mut global = VarView::new(project.lifter.global_space_id());
+            let mut stack = VarView::new(project.lifter.global_space_id());
 
             let mut adapt = VarsVisitor::new(&mut global);
             f.visit(project.code_blocks(), &mut adapt);

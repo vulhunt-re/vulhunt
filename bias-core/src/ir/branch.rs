@@ -34,7 +34,7 @@ impl<'target, 'trans> fmt::Display for BranchTarget {
 
 pub struct BranchTargetFormatter<'target, 'trans> {
     target: &'target BranchTarget,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
 }
 
 impl<'target, 'trans> fmt::Display for BranchTargetFormatter<'target, 'trans> {
@@ -58,10 +58,10 @@ impl<'target, 'trans> fmt::Display for BranchTargetFormatter<'target, 'trans> {
     }
 }
 
-impl<'target, 'trans> TranslatorDisplay<'target, 'trans> for BranchTarget {
+impl<'target, 'trans> LanguageDisplay<'target, 'trans> for BranchTarget {
     type Target = BranchTargetFormatter<'target, 'trans>;
 
-    fn display_full(&'target self, fmt: Cow<'trans, TranslatorFormatter<'trans>>) -> Self::Target {
+    fn display_full(&'target self, fmt: Cow<'trans, LanguageFormatter<'trans>>) -> Self::Target {
         BranchTargetFormatter { target: self, fmt }
     }
 }

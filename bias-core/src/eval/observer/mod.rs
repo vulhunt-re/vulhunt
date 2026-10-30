@@ -2,12 +2,11 @@ use std::borrow::Cow;
 
 use downcast_rs::{impl_downcast, Downcast};
 use fugue::bv::BitVec;
-use fugue::ir::Address;
 use thiserror::Error;
 use ustr::Ustr;
 
 use crate::eval::{IRContext, ObserverContext};
-use crate::ir::{Expr, Insn, Location, Stmt, Term, Var};
+use crate::ir::{Address, Expr, Insn, Location, Stmt, Term, Var};
 use crate::kb::block::CodeBlock;
 use crate::kb::function::Function;
 use crate::kb::function_summary::FunctionSummary;

@@ -25,16 +25,12 @@ impl Observer for ConstObserver {
         sexpr: &Term<Expr>,
     ) -> Result<(), ObserverError> {
         let v = match sexpr.as_ref() {
-            Expr::Val(BitVec::N(v), ValHint::CONSTANT) => v,
-            Expr::BinOp(_, e1, e2) | Expr::BinRel(_, e1, e2) => {
-                if let Expr::Val(BitVec::N(v), ValHint::CONSTANT) = e2.as_ref() {
-                    v
-                } else if let Expr::Val(BitVec::N(v), ValHint::CONSTANT) = e1.as_ref() {
-                    v
-                } else {
-                    return Ok(());
-                }
-            }
+            Expr::Val(v, ValHint::CONSTANT) if v.bits() <= 64 => v,
+            Expr::BinOp(_, e1, e2) | Expr::BinRel(_, e1, e2) => match (e1.as_ref(), e2.as_ref()) {
+                (_, Expr::Val(v, ValHint::CONSTANT)) if v.bits() <= 64 => v,
+                (Expr::Val(v, ValHint::CONSTANT), _) if v.bits() <= 64 => v,
+                _ => return Ok(()),
+            },
             _ => return Ok(()),
         };
 
@@ -42,7 +38,10 @@ impl Observer for ConstObserver {
             .get_mut::<ConstContext>(CONSTANTS_CONTEXT)
             .expect("invalid context");
 
-        ctx.add_const(*v.as_raw());
+        ctx.add_const(
+            v.to_u64()
+                .expect("bit vector of at most 64 bits fits in u64"),
+        );
 
         Ok(())
     }

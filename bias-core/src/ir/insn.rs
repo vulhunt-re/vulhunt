@@ -1,17 +1,16 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::fmt;
+use std::fmt::{self, Write};
 use std::iter::{once, repeat};
 use std::mem::take;
 use std::ops::{Index, Range};
 
 use ahash::{AHashMap, AHashSet};
 use fugue::bv::BitVec;
-use fugue::ir::address::Address;
-use fugue::ir::disassembly::{ContextDatabase, IRBuilderArena, ParserContext};
-use fugue::ir::error::Error;
-use fugue::ir::il::traits::*;
-use fugue::ir::space::AddressSpaceId;
+use fugue::lifter::runtime::operand::OperandPiece;
+use fugue::lifter::runtime::pcode::{LiftingContext, PCodeOp};
+use fugue::lifter::runtime::InstructionFormatter;
+use fugue::sleigh::language::spaces::AddressSpaceId;
 use itertools::{Itertools, Position};
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableDiGraph;
@@ -26,11 +25,12 @@ use crate::arch::Arch;
 use crate::cfg::FlowKind;
 use crate::ir::expr::ValHint;
 use crate::ir::term::Term;
+use crate::ir::traits::*;
 use crate::ir::{
-    BranchTarget, Expr, Location, SimpleVar, Stmt, Var, VarsSubst, VarsSubstVisitor, Visit,
+    Address, BranchTarget, Expr, Location, SimpleVar, Stmt, Var, VarsSubst, VarsSubstVisitor, Visit,
 };
 use crate::kb::xref::XRef;
-use crate::lifter::Lifter;
+use crate::lifter::{Lifter, LifterError};
 use crate::region::Memory;
 
 thread_local! { static INSN: Arena<Insn> = Default::default(); }
@@ -304,7 +304,7 @@ impl<'a, T: Copy> From<InsnChunk<'a, T>> for InsnChunks<'a, T> {
 
 pub struct InsnChunksFormatter<'c, 'i, 't, T: Copy> {
     chunks: &'c InsnChunks<'i, T>,
-    fmt: Cow<'t, TranslatorFormatter<'t>>,
+    fmt: Cow<'t, LanguageFormatter<'t>>,
 }
 
 impl<'c, 'i, 't, T: Copy> fmt::Display for InsnChunksFormatter<'c, 'i, 't, T> {
@@ -338,13 +338,13 @@ impl<'c, 'i, 't, T: Copy> fmt::Display for InsnChunksFormatter<'c, 'i, 't, T> {
     }
 }
 
-impl<'c, 'i, 't, T: Copy + 'i> TranslatorDisplay<'c, 't> for InsnChunks<'i, T>
+impl<'c, 'i, 't, T: Copy + 'i> LanguageDisplay<'c, 't> for InsnChunks<'i, T>
 where
     'i: 'c,
 {
     type Target = InsnChunksFormatter<'c, 'i, 't, T>;
 
-    fn display_full(&'c self, fmt: Cow<'t, TranslatorFormatter<'t>>) -> Self::Target {
+    fn display_full(&'c self, fmt: Cow<'t, LanguageFormatter<'t>>) -> Self::Target {
         InsnChunksFormatter { chunks: self, fmt }
     }
 }
@@ -523,21 +523,131 @@ impl InsnOperand {
     }
 }
 
-impl From<fugue::ir::il::instruction::Operand<'_, '_>> for InsnOperand {
-    fn from(op: fugue::ir::il::instruction::Operand) -> Self {
-        use fugue::ir::il::instruction::Operand;
-        match op {
-            Operand::Address(v, r) => Self::Address(v, r),
-            Operand::Group(vs) => Self::Group(vs.into_iter().map(Self::from).collect()),
-            Operand::Register(v, r) => Self::Register(Ustr::from(v.trim()), r),
-            Operand::Value(v, r) => Self::Value(v, r),
+#[derive(Default)]
+struct InsnTextFormatter {
+    mnemonic: String,
+    operands: String,
+    operand_data: SmallVec<[InsnOperand; 2]>,
+    groups: Vec<Vec<InsnOperand>>,
+    tokens: Vec<InsnToken>,
+    in_body: bool,
+}
+
+impl InsnTextFormatter {
+    fn push_operand(&mut self, operand: InsnOperand) {
+        match self.groups.last_mut() {
+            Some(group) => group.push(operand),
+            None => self.operand_data.push(operand),
+        }
+    }
+
+    fn push_symbols(&mut self, text: &str) {
+        self.tokens.extend(
+            text.split_whitespace()
+                .map(Ustr::from)
+                .map(InsnToken::Symbol),
+        );
+    }
+
+    fn into_text(self, address: Address, delay_slots: usize, length: usize) -> InsnText {
+        InsnText {
+            address,
+            mnemonic: Ustr::from(&self.mnemonic),
+            operands: self.operands,
+            operand_data: self.operand_data,
+            tokens: self.tokens,
+            delay_slots: delay_slots as u8,
+            length: length as u8,
         }
     }
 }
 
-impl InsnOperand {
-    fn from_operands(ops: fugue::ir::il::instruction::Operands) -> SmallVec<[Self; 2]> {
-        ops.into_iter().map(Self::from).collect()
+impl InstructionFormatter for InsnTextFormatter {
+    fn write_mnemonic(&mut self, mnemonic: &str) -> fmt::Result {
+        self.mnemonic.push_str(mnemonic);
+        self.push_symbols(mnemonic);
+        Ok(())
+    }
+
+    fn write_literal(&mut self, text: &str) -> fmt::Result {
+        if self.in_body {
+            self.operands.push_str(text);
+            self.push_symbols(text);
+        } else {
+            self.in_body = true;
+        }
+        Ok(())
+    }
+
+    fn write_register(&mut self, name: &str) -> fmt::Result {
+        self.operands.push_str(name);
+        self.tokens
+            .push(InsnToken::Register(Ustr::from(name.trim())));
+        Ok(())
+    }
+
+    fn write_value(&mut self, value: i64, text: &str) -> fmt::Result {
+        self.operands.push_str(text);
+        self.tokens.push(InsnToken::Value(value));
+        Ok(())
+    }
+
+    fn write_address(&mut self, address: u64, text: &str) -> fmt::Result {
+        self.operands.push_str(text);
+        self.tokens.push(InsnToken::Address(Address::from(address)));
+        Ok(())
+    }
+
+    fn begin_operand(&mut self) -> fmt::Result {
+        self.groups.push(Vec::new());
+        Ok(())
+    }
+
+    fn end_operand(&mut self) -> fmt::Result {
+        let mut group = self.groups.pop().ok_or(fmt::Error)?;
+        if group.len() > 1 {
+            self.push_operand(InsnOperand::Group(group));
+        } else if let Some(operand) = group.pop() {
+            self.push_operand(operand);
+        }
+        Ok(())
+    }
+
+    fn write_operand_piece(
+        &mut self,
+        piece: OperandPiece,
+        bits: Option<Range<u32>>,
+    ) -> fmt::Result {
+        match piece {
+            OperandPiece::Text(text) if bits.is_some() => {
+                let name = Ustr::from(text.trim());
+                self.push_operand(InsnOperand::Register(name, bits));
+                self.operands.push_str(text);
+                self.tokens.push(InsnToken::Register(name));
+            }
+            OperandPiece::Text(text) => {
+                self.operands.push_str(text);
+                self.push_symbols(text);
+            }
+            OperandPiece::Register(register) => {
+                let name = Ustr::from(register.name().trim());
+                self.push_operand(InsnOperand::Register(name, bits));
+                self.operands.push_str(register.name());
+                self.tokens.push(InsnToken::Register(name));
+            }
+            OperandPiece::Scalar(scalar) => {
+                self.push_operand(InsnOperand::Value(scalar.value(), bits));
+                write!(self.operands, "{scalar}")?;
+                self.tokens.push(InsnToken::Value(scalar.value()));
+            }
+            OperandPiece::Address(address) => {
+                let address = Address::from(address);
+                self.push_operand(InsnOperand::Address(address, bits));
+                write!(self.operands, "{address}")?;
+                self.tokens.push(InsnToken::Address(address));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -556,27 +666,6 @@ pub enum InsnToken {
     Value(i64),
 }
 
-impl InsnToken {
-    fn from_tokens(tokens: fugue::ir::disassembly::symbol::Tokens) -> Vec<Self> {
-        use fugue::ir::disassembly::symbol::Token;
-
-        let mut output = Vec::with_capacity(tokens.len());
-
-        for token in tokens.into_iter() {
-            match token {
-                Token::Address(v) => output.push(Self::Address(v)),
-                Token::Register(v) => output.push(Self::Register(Ustr::from(v.trim()))),
-                Token::Symbol(v) => {
-                    output.extend(v.split_whitespace().map(Ustr::from).map(Self::Symbol));
-                }
-                Token::Value(v) => output.push(Self::Value(v)),
-            }
-        }
-
-        output
-    }
-}
-
 impl Insn {
     pub fn from_parts(
         address: impl Into<Address>,
@@ -590,193 +679,92 @@ impl Insn {
         }
     }
 
-    pub fn disassemble<'a, 'az, A>(
-        lifter: &'a Lifter,
-        irb: &'az IRBuilderArena,
-        ctx: &mut ContextDatabase,
-        pctx: &mut ParserContext<'a, 'az>,
-        addr: A,
+    pub fn disassemble(
+        lifter: &Lifter,
+        context: &mut LiftingContext,
+        address: impl Into<Address>,
         bytes: &[u8],
-    ) -> Result<InsnText, Error>
-    where
-        A: Into<Address>,
-    {
-        let t = lifter.translator();
+    ) -> Result<InsnText, LifterError> {
+        let address = address.into();
+        let mut formatter = InsnTextFormatter::default();
 
-        let address = addr.into();
-        let address_val = t.address(address.into());
+        let length = match lifter.language().disassemble_and_format(
+            address.offset(),
+            bytes,
+            context,
+            &mut formatter,
+        ) {
+            Ok(Some(length)) => length,
+            Ok(None) => return Err(LifterError::Disassembly(address)),
+            Err(_) => return Err(LifterError::Format(address)),
+        };
 
-        let (mnemonic, operand_str, operand_data, tokens, delay_slots, length) = t
-            .disassemble_aux(
-                ctx,
-                pctx,
-                irb,
-                address_val,
-                bytes,
-                |fmt, delay_slots, length| -> Result<_, fugue::ir::error::Error> {
-                    let mnemonic = Ustr::from(fmt.mnemonic_str(irb).as_str());
-                    let operand_str = fmt.operands_str(irb).as_str().to_owned();
-                    let operand_data = InsnOperand::from_operands(fmt.operand_data(irb));
+        Ok(formatter.into_text(address, context.delay_slot_length(), length))
+    }
 
-                    let (mut tokens, body_tokens) = fmt.tokens(irb);
-                    tokens.append(body_tokens);
-
-                    Ok((
-                        mnemonic,
-                        operand_str,
-                        operand_data,
-                        InsnToken::from_tokens(tokens),
-                        delay_slots,
-                        length,
-                    ))
-                },
-            )?;
-
-        if length as usize > bytes.len() {
-            return Err(Error::Disassembly(
-                fugue::ir::disassembly::Error::InstructionResolution,
-            ));
-        }
-
-        Ok(InsnText {
-            address,
-            mnemonic,
-            operands: operand_str,
-            operand_data,
-            tokens,
-            delay_slots: delay_slots as u8,
-            length: length as u8,
+    pub fn lift(
+        lifter: &Lifter,
+        context: &mut LiftingContext,
+        operations: &mut Vec<PCodeOp>,
+        address: impl Into<Address>,
+        bytes: &[u8],
+    ) -> Result<Term<Self>, LifterError> {
+        Self::lift_aux(lifter, context, operations, address.into(), bytes, |stmt| {
+            stmt
         })
     }
 
-    pub fn lift<'a, 'az, A>(
-        lifter: &'a Lifter,
-        irb: &'az IRBuilderArena,
-        ctx: &mut ContextDatabase,
-        pctx: &mut ParserContext<'a, 'az>,
-        addr: A,
+    pub fn lift_with(
+        lifter: &Lifter,
+        context: &mut LiftingContext,
+        operations: &mut Vec<PCodeOp>,
+        cache: &mut StmtCache,
+        address: impl Into<Address>,
         bytes: &[u8],
-    ) -> Result<Term<Self>, Error>
-    where
-        A: Into<Address>,
-    {
-        let t = lifter.translator();
-        let ffs = lifter.float_kinds();
-
-        let address = addr.into();
-        let address_val = t.address(address.into());
-
-        let mut base = irb.builder(t);
-
-        let raw = t.lift_pcode_raw_with(ctx, pctx, irb, &mut base, address_val, bytes)?;
-
-        let manager = t.manager();
-        let user_ops = t.user_ops();
-
-        if raw.length as usize > bytes.len() {
-            return Err(Error::Disassembly(
-                fugue::ir::disassembly::Error::InstructionResolution,
-            ));
+    ) -> Result<Term<Self>, LifterError> {
+        let address = address.into();
+        if let Some((_realigned, alignment)) = lifter
+            .arch()
+            .compute_aligned_address(address, lifter, &*context)
+        {
+            return Err(LifterError::IncorrectAlignment { address, alignment });
         }
 
-        let operations = if raw.operations.is_empty() {
-            smallvec![Stmt::skip()]
-        } else {
-            raw.operations
-                .into_iter()
-                .enumerate()
-                .map(|(i, op)| {
-                    Stmt::from_parts(
-                        manager,
-                        ffs,
-                        user_ops,
-                        &address_val,
-                        i,
-                        op.opcode,
-                        op.inputs,
-                        op.output,
-                    )
-                })
-                .collect()
-        };
-
-        Ok(Insn {
-            operations,
-            address,
-            delay_slots: raw.delay_slots,
-            length: raw.length,
-        }
-        .into())
+        Self::lift_aux(lifter, context, operations, address, bytes, |stmt| {
+            Stmt::interned(stmt, cache)
+        })
     }
 
-    pub fn lift_with<'a, 'az, A>(
-        lifter: &'a Lifter,
-        irb: &'az IRBuilderArena,
-        ctx: &mut ContextDatabase,
-        pctx: &mut ParserContext<'a, 'az>,
-        cache: &mut StmtCache,
-        addr: A,
+    fn lift_aux<F>(
+        lifter: &Lifter,
+        context: &mut LiftingContext,
+        operations: &mut Vec<PCodeOp>,
+        address: Address,
         bytes: &[u8],
-    ) -> Result<Term<Self>, Error>
+        intern: F,
+    ) -> Result<Term<Self>, LifterError>
     where
-        A: Into<Address>,
+        F: FnMut(Term<Stmt>) -> Term<Stmt>,
     {
-        let t = lifter.translator();
-        let ffs = lifter.float_kinds();
+        let language = lifter.language();
 
-        let address = addr.into();
-        if let Some((_realigned, alignment)) =
-            lifter.arch().compute_aligned_address(address, lifter, ctx)
-        {
-            return Err(Error::Disassembly(
-                fugue::ir::disassembly::Error::IncorrectAlignment {
-                    address: address.offset(),
-                    alignment,
-                },
-            ));
-        }
-        let address_val = t.address(address.into());
+        let Some(length) = language.lift(address.offset(), bytes, context, operations) else {
+            return Err(LifterError::Lift(address));
+        };
 
-        let mut base = irb.builder(t);
-
-        let raw = t.lift_pcode_raw_with(ctx, pctx, irb, &mut base, address_val, bytes)?;
-
-        let manager = t.manager();
-        let user_ops = t.user_ops();
-
-        if raw.length as usize > bytes.len() {
-            return Err(Error::Disassembly(
-                fugue::ir::disassembly::Error::InstructionResolution,
-            ));
-        }
-
-        let operations = if raw.operations.is_empty() {
+        let statements = if operations.is_empty() {
             smallvec![Stmt::skip()]
         } else {
-            raw.operations
-                .into_iter()
-                .enumerate()
-                .map(|(i, op)| {
-                    Stmt::from_parts_with(
-                        manager,
-                        ffs,
-                        user_ops,
-                        &address_val,
-                        i,
-                        op.opcode,
-                        op.inputs,
-                        op.output,
-                        cache,
-                    )
-                })
+            Stmt::from_pcode(language, lifter.float_kinds(), address, operations)
+                .map(intern)
                 .collect()
         };
 
         Ok(Insn {
             address,
-            operations,
-            delay_slots: raw.delay_slots,
-            length: raw.length,
+            operations: statements,
+            delay_slots: context.delay_slot_length() as u8,
+            length: length as u8,
         }
         .into())
     }
@@ -1873,7 +1861,7 @@ impl fmt::Display for Insn {
 
 pub struct InsnFormatter<'insn, 'trans> {
     insn: &'insn Insn,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
 }
 
 impl<'insn, 'trans> fmt::Display for InsnFormatter<'insn, 'trans> {
@@ -1897,10 +1885,10 @@ impl<'insn, 'trans> fmt::Display for InsnFormatter<'insn, 'trans> {
     }
 }
 
-impl<'insn, 'trans> TranslatorDisplay<'insn, 'trans> for Insn {
+impl<'insn, 'trans> LanguageDisplay<'insn, 'trans> for Insn {
     type Target = InsnFormatter<'insn, 'trans>;
 
-    fn display_full(&'insn self, fmt: Cow<'trans, TranslatorFormatter<'trans>>) -> Self::Target {
+    fn display_full(&'insn self, fmt: Cow<'trans, LanguageFormatter<'trans>>) -> Self::Target {
         InsnFormatter { insn: self, fmt }
     }
 }
@@ -1910,7 +1898,6 @@ mod test {
     use std::env;
 
     use fugue::bytes::Endian;
-    use fugue::ir::space::{AddressSpace, Space, SpaceKind};
     use smallvec::smallvec;
 
     use super::*;
@@ -1919,13 +1906,13 @@ mod test {
 
     #[test]
     fn ser_de() -> Result<(), Box<dyn std::error::Error>> {
-        let rspace = AddressSpace::Space(Space::new(SpaceKind::Register, "REG", 8, 1, 0, None, 0));
+        let rspace = AddressSpaceId::register_id(0);
 
         let address = Address::from(0x1000u32);
 
-        let r1 = Var::new(&rspace, 0, 32, 0);
-        let r2 = Var::new(&rspace, 4, 32, 0);
-        let r3 = Var::new(&rspace, 8, 32, 0);
+        let r1 = Var::new(rspace, 0, 32, 0);
+        let r2 = Var::new(rspace, 4, 32, 0);
+        let r3 = Var::new(rspace, 8, 32, 0);
 
         let ops: SmallVec<[Term<Stmt>; 6]> = smallvec![
             Stmt::assign(r1, Expr::int_add(Expr::var(r1), Expr::var(r2))),
@@ -1963,8 +1950,8 @@ mod test {
 
     #[test]
     fn local_blocks() -> Result<(), Box<dyn std::error::Error>> {
-        let rspace = AddressSpace::Space(Space::new(SpaceKind::Register, "REG", 8, 1, 0, None, 0));
-        let tspace = AddressSpace::Unique(Space::new(SpaceKind::Internal, "TMP", 8, 1, 0, None, 0));
+        let rspace = AddressSpaceId::register_id(0);
+        let tspace = AddressSpaceId::unique_id(0);
 
         let data = env::var("BIAS_DATA")?;
 
@@ -1973,13 +1960,13 @@ mod test {
 
         let address = Address::from(0x1000u32);
 
-        let r1 = Var::new(&rspace, 0, 32, 0);
-        let r2 = Var::new(&rspace, 4, 32, 0);
-        let r3 = Var::new(&rspace, 8, 32, 0);
+        let r1 = Var::new(rspace, 0, 32, 0);
+        let r2 = Var::new(rspace, 4, 32, 0);
+        let r3 = Var::new(rspace, 8, 32, 0);
 
-        let t1 = Var::new(&tspace, 0, 32, 0);
-        let t2 = Var::new(&tspace, 4, 32, 0);
-        let t3 = Var::new(&tspace, 8, 8, 0);
+        let t1 = Var::new(tspace, 0, 32, 0);
+        let t2 = Var::new(tspace, 4, 32, 0);
+        let t3 = Var::new(tspace, 8, 8, 0);
 
         let ops: SmallVec<[Term<Stmt>; 6]> = smallvec![
             Stmt::assign(t1, Expr::int_add(Expr::var(r1), Expr::var(r2))),
@@ -2018,18 +2005,18 @@ mod test {
 
     #[test]
     fn local_cfg() -> Result<(), Box<dyn std::error::Error>> {
-        let rspace = AddressSpace::Space(Space::new(SpaceKind::Register, "REG", 8, 1, 0, None, 0));
-        let tspace = AddressSpace::Unique(Space::new(SpaceKind::Internal, "TMP", 8, 1, 0, None, 0));
+        let rspace = AddressSpaceId::register_id(0);
+        let tspace = AddressSpaceId::unique_id(0);
 
         let address = Address::from(0x1000u32);
 
-        let r1 = Var::new(&rspace, 0, 32, 0);
-        let r2 = Var::new(&rspace, 4, 32, 0);
-        let r3 = Var::new(&rspace, 8, 32, 0);
+        let r1 = Var::new(rspace, 0, 32, 0);
+        let r2 = Var::new(rspace, 4, 32, 0);
+        let r3 = Var::new(rspace, 8, 32, 0);
 
-        let t1 = Var::new(&tspace, 0, 32, 0);
-        let t2 = Var::new(&tspace, 4, 32, 0);
-        let t3 = Var::new(&tspace, 8, 8, 0);
+        let t1 = Var::new(tspace, 0, 32, 0);
+        let t2 = Var::new(tspace, 4, 32, 0);
+        let t3 = Var::new(tspace, 8, 8, 0);
 
         let ops: SmallVec<[Term<Stmt>; 6]> = smallvec![
             Stmt::assign(t1, Expr::int_add(Expr::var(r1), Expr::var(r2))),
@@ -2071,8 +2058,8 @@ mod test {
 
     #[test]
     fn compact_insn() -> Result<(), Box<dyn std::error::Error>> {
-        let rspace = AddressSpace::Space(Space::new(SpaceKind::Register, "REG", 8, 1, 0, None, 0));
-        let tspace = AddressSpace::Unique(Space::new(SpaceKind::Internal, "TMP", 8, 1, 0, None, 0));
+        let rspace = AddressSpaceId::register_id(0);
+        let tspace = AddressSpaceId::unique_id(0);
 
         let data = env::var("BIAS_DATA")?;
 
@@ -2081,12 +2068,12 @@ mod test {
 
         let address = Address::from(0x1000u32);
 
-        let r1 = Var::new(&rspace, 0, 32, 0);
-        let r2 = Var::new(&rspace, 4, 32, 0);
-        let r3 = Var::new(&rspace, 8, 32, 0);
+        let r1 = Var::new(rspace, 0, 32, 0);
+        let r2 = Var::new(rspace, 4, 32, 0);
+        let r3 = Var::new(rspace, 8, 32, 0);
 
-        let t1 = Var::new(&tspace, 0, 32, 0);
-        let t2 = Var::new(&tspace, 4, 32, 0);
+        let t1 = Var::new(tspace, 0, 32, 0);
+        let t2 = Var::new(tspace, 4, 32, 0);
 
         let ops: SmallVec<[Term<Stmt>; 6]> = smallvec![
             Stmt::assign(t1, Expr::int_add(Expr::var(r1), Expr::var(r2))),

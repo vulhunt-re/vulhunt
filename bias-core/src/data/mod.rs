@@ -168,12 +168,8 @@ const MAX_STRING_LENGTH: usize = 256;
 impl DataTypeDB {
     pub fn new(lifter: &Lifter) -> Self {
         Self {
-            endian: if lifter.translator().is_big_endian() {
-                Endian::Big
-            } else {
-                Endian::Little
-            },
-            address_size: lifter.global_space().address_size(),
+            endian: lifter.endian(),
+            address_size: lifter.language().address_size(),
             ranges: IntervalMap::default(),
         }
     }
@@ -233,15 +229,15 @@ impl DataTypeDB {
             let view = &bytes[..self.address_size];
             let addr = if self.address_size == 8 {
                 Address::from(if self.endian.is_big() {
-                    u64::from_bytes::<BE>(view)
+                    u64::read_bytes::<BE>(view)
                 } else {
-                    u64::from_bytes::<LE>(view)
+                    u64::read_bytes::<LE>(view)
                 })
             } else if self.address_size == 4 {
                 Address::from(if self.endian.is_big() {
-                    u32::from_bytes::<BE>(view)
+                    u32::read_bytes::<BE>(view)
                 } else {
-                    u32::from_bytes::<LE>(view)
+                    u32::read_bytes::<LE>(view)
                 })
             } else {
                 return None;

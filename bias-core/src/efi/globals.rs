@@ -1,8 +1,7 @@
 use std::collections::BTreeSet;
 
 use fugue::bv::BitVec;
-use fugue::ir::convention::PrototypeOperand;
-use fugue::ir::Address;
+use fugue::lifter::runtime::convention::PrototypeOperand;
 use itertools::Itertools;
 use thiserror::Error;
 use uuid::Uuid;
@@ -17,7 +16,7 @@ use crate::efi::module::ModuleInfo;
 use crate::eval::observer::{Observer, ObserverError};
 use crate::eval::strategy::xforce::XForceStrategy;
 use crate::eval::{Bound, Configuration, IRContext, IREvaluator, ObserverContext, ObserverState};
-use crate::ir::{BitSize, Expr, Insn, Location, Stmt, Term, ToAddress, Type, Var};
+use crate::ir::{Address, BitSize, Expr, Insn, Location, Stmt, Term, ToAddress, Type, Var};
 use crate::kb::xref::XRef;
 use crate::kb::{uuid, AHashMap, AHashSet};
 use crate::lifter::PrototypeResolver;
@@ -323,7 +322,7 @@ impl Observer for ObserveSmst {
         var: &Var,
         val: &mut Option<BitVec>,
     ) -> Result<(), ObserverError> {
-        *val = Some(BitVec::zero(var.nbits() as usize));
+        *val = Some(BitVec::zero(var.nbits()));
         Ok(())
     }
 
@@ -374,7 +373,7 @@ impl Observer for ObserveSmst {
                 self.smst_tables.insert(addr);
 
                 context
-                    .write_var(&smst_var, &BitVec::zero(smst_var.nbits() as usize))
+                    .write_var(&smst_var, &BitVec::zero(smst_var.nbits()))
                     .ok();
                 context.write_pointer(addr, Address::from(0u32)).ok();
             }
@@ -384,7 +383,7 @@ impl Observer for ObserveSmst {
 
             tracing::info!("clearing return value of gSmmBase2->GetSmstLocation at {retn_var}");
             context
-                .write_var(&retn_var, &BitVec::zero(retn_var.nbits() as usize))
+                .write_var(&retn_var, &BitVec::zero(retn_var.nbits()))
                 .expect("write to return operand");
         }
         Ok(())
@@ -628,7 +627,7 @@ impl GlobalsAnalyser {
             .unwrap();
 
         let addr_bits = project.lifter().address_bits();
-        let addr_bytes = project.lifter().global_space().address_size();
+        let addr_bytes = project.lifter().language().address_size();
 
         let ps = type_for(project, "EFI_PEI_SERVICES", addr_bits)?;
         let pei_paddr = eval
@@ -651,7 +650,7 @@ impl GlobalsAnalyser {
         write_var(
             &mut eval,
             &arg1,
-            &BitVec::from_u32(0xffff_ffffu32, addr_bits as usize),
+            &BitVec::from_u32(0xffff_ffffu32, addr_bits),
         )?;
 
         // **PeiServices
@@ -661,7 +660,7 @@ impl GlobalsAnalyser {
         write_var(
             &mut eval,
             &arg2,
-            &BitVec::from_u64(pei_paddr.into(), addr_bits as usize),
+            &BitVec::from_u64(pei_paddr.into(), addr_bits),
         )?;
 
         tracing::trace!("tracking from module entry to locate PEI service globals");
@@ -785,16 +784,12 @@ impl GlobalsAnalyser {
             .ok_or_else(|| Error::UnsupportedConvention)?;
 
         // write arguments
-        write_var(
-            &mut eval,
-            &arg1,
-            &BitVec::from_u32(0xffff_ffff, addr_bits as usize),
-        )?;
+        write_var(&mut eval, &arg1, &BitVec::from_u32(0xffff_ffff, addr_bits))?;
 
         write_var(
             &mut eval,
             &arg2,
-            &BitVec::from_u64(st_base.into(), addr_bits as usize),
+            &BitVec::from_u64(st_base.into(), addr_bits),
         )?;
 
         eval.refreeze();

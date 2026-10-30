@@ -1,10 +1,9 @@
-use fugue::ir::{Address, Translator};
+use fugue::lifter::runtime::language::Language;
 
-use super::{Arch, ErasedArch, FunctionThunkTemplate};
+use super::{register_var, Arch, ErasedArch, FunctionThunkTemplate};
 use crate::arch::AddressRangeSet;
-use crate::ir::{Expr, Term, Var};
+use crate::ir::{Address, Expr, Term, Var};
 use crate::kb::{uuid, Uuid};
-use crate::lifter::TranslatorExt;
 
 #[derive(Copy, Clone, Default)]
 pub struct AARCH64;
@@ -24,44 +23,44 @@ impl Arch for AARCH64 {
         name == "halt"
     }
 
-    fn external_thunk_template(&self, _translator: &Translator) -> FunctionThunkTemplate {
+    fn external_thunk_template(&self, _language: &'static Language) -> FunctionThunkTemplate {
         FunctionThunkTemplate::new([0xC0, 0x03, 0x5F, 0xD6]) // RET
     }
 
-    fn gprs(&self, translator: &Translator) -> Vec<Var> {
+    fn gprs(&self, language: &'static Language) -> Vec<Var> {
         || -> Option<Vec<Var>> {
             Some(vec![
-                translator.register_var("x0")?,
-                translator.register_var("x1")?,
-                translator.register_var("x2")?,
-                translator.register_var("x3")?,
-                translator.register_var("x4")?,
-                translator.register_var("x5")?,
-                translator.register_var("x6")?,
-                translator.register_var("x7")?,
-                translator.register_var("x8")?,
-                translator.register_var("x9")?,
-                translator.register_var("x10")?,
-                translator.register_var("x11")?,
-                translator.register_var("x12")?,
-                translator.register_var("x13")?,
-                translator.register_var("x14")?,
-                translator.register_var("x15")?,
-                translator.register_var("x16")?,
-                translator.register_var("x17")?,
-                translator.register_var("x18")?,
-                translator.register_var("x19")?,
-                translator.register_var("x20")?,
-                translator.register_var("x21")?,
-                translator.register_var("x22")?,
-                translator.register_var("x23")?,
-                translator.register_var("x24")?,
-                translator.register_var("x25")?,
-                translator.register_var("x26")?,
-                translator.register_var("x27")?,
-                translator.register_var("x28")?,
-                translator.register_var("x29")?,
-                translator.register_var("x30")?,
+                register_var(language, "x0")?,
+                register_var(language, "x1")?,
+                register_var(language, "x2")?,
+                register_var(language, "x3")?,
+                register_var(language, "x4")?,
+                register_var(language, "x5")?,
+                register_var(language, "x6")?,
+                register_var(language, "x7")?,
+                register_var(language, "x8")?,
+                register_var(language, "x9")?,
+                register_var(language, "x10")?,
+                register_var(language, "x11")?,
+                register_var(language, "x12")?,
+                register_var(language, "x13")?,
+                register_var(language, "x14")?,
+                register_var(language, "x15")?,
+                register_var(language, "x16")?,
+                register_var(language, "x17")?,
+                register_var(language, "x18")?,
+                register_var(language, "x19")?,
+                register_var(language, "x20")?,
+                register_var(language, "x21")?,
+                register_var(language, "x22")?,
+                register_var(language, "x23")?,
+                register_var(language, "x24")?,
+                register_var(language, "x25")?,
+                register_var(language, "x26")?,
+                register_var(language, "x27")?,
+                register_var(language, "x28")?,
+                register_var(language, "x29")?,
+                register_var(language, "x30")?,
             ])
         }()
         .unwrap_or_default()

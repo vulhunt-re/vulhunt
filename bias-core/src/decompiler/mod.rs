@@ -5,9 +5,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, Once};
 use std::time::Duration;
 
+use fugue::lifter::runtime::pcode::Varnode;
+use fugue::sleigh::language::LanguageDB;
 use replace_with::replace_with_or_abort_and_return;
 
-use crate::fugue::ir::LanguageDB;
 use crate::kb::Lazy;
 use crate::prelude::*;
 
@@ -57,6 +58,15 @@ fn ensure_init() {
         DECOMPILER_INIT
             .call_once(|| ffi::ghidra_decompiler_init().expect("decompiler initialisation"))
     }
+}
+
+fn is_register(lifter: &Lifter, offset: u64, size: u32) -> bool {
+    let Ok(size) = u16::try_from(size) else {
+        return false;
+    };
+    let language = lifter.language();
+    let varnode = Varnode::new(language.register_space(), offset, size);
+    language.register_name(&varnode).is_some() || language.containing_register(&varnode).is_some()
 }
 
 pub fn add_search_paths(root: impl AsRef<Path>) -> Result<(), DecompilerError> {
@@ -273,20 +283,9 @@ impl<'a> Decompiler<'a> {
     {
         ensure_init();
 
-        let arch = project.lifter().translator().architecture();
+        let language = project.lifter().language();
         let conv = project.lifter().convention().name();
-        let spec = format!(
-            "{}:{}:{}:{}:{}",
-            arch.processor(),
-            if arch.endian().is_little() {
-                "LE"
-            } else {
-                "BE"
-            },
-            arch.bits(),
-            arch.variant(),
-            conv,
-        );
+        let spec = format!("{}:{conv}", language.id());
 
         cxx::let_cxx_string!(cxx_spec = spec);
 
@@ -315,20 +314,9 @@ impl<'a> Decompiler<'a> {
     ) -> Result<Self, DecompilerError> {
         ensure_init();
 
-        let arch = lifter.translator().architecture();
+        let language = lifter.language();
         let conv = lifter.convention().name();
-        let spec = format!(
-            "{}:{}:{}:{}:{}",
-            arch.processor(),
-            if arch.endian().is_little() {
-                "LE"
-            } else {
-                "BE"
-            },
-            arch.bits(),
-            arch.variant(),
-            conv,
-        );
+        let spec = format!("{}:{conv}", language.id());
 
         cxx::let_cxx_string!(cxx_spec = spec);
 

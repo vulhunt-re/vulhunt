@@ -2,10 +2,10 @@ use std::borrow::Borrow;
 use std::ops::Range;
 
 use ahash::{AHashMap, AHashSet};
-use fugue::ir::Address;
 
 use crate::analyses::folded_xrefs::FoldedXRefDB;
 use crate::ir::insn::VisitXRefs;
+use crate::ir::Address;
 use crate::kb::block::CodeBlockId;
 use crate::kb::id::Identifiable;
 use crate::kb::uuid;

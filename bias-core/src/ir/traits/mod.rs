@@ -2,12 +2,13 @@ use std::borrow::Cow;
 use std::hash::Hash;
 
 use fugue::bv::BitVec;
-pub use fugue::ir::il::traits::{TranslatorDisplay, TranslatorFormatter};
-use fugue::ir::AddressSpaceId;
+use fugue::sleigh::language::spaces::AddressSpaceId;
 
 use crate::ir::Address;
 use crate::kb::phi::Phi;
 
+pub mod display;
+pub use display::{BitVecFormatter, LanguageDisplay, LanguageFormatter};
 pub mod visit;
 pub use visit::{VarsVisitor, Visit, VisitVars};
 pub mod visit_mut;
@@ -23,7 +24,7 @@ pub trait BitSize {
 
 impl BitSize for BitVec {
     fn nbits(&self) -> u32 {
-        self.bits() as u32
+        self.bits()
     }
 }
 

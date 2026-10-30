@@ -5,6 +5,7 @@ use bias_core::any::ProvidesStaticType;
 use bias_core::arch::ContextUpdates;
 use bias_core::arch::ErasedArch;
 use bias_core::arch::arm::TMODE_CONTEXT;
+use bias_core::ir::Address;
 use bias_core::kb::function::FunctionInfo;
 use bias_core::kb::{Uuid, uuid};
 use bias_core::lifter::Lifter;
@@ -13,7 +14,6 @@ use bias_core::loader::{
     LoadedBinary, LoaderAttribute, LoaderBlock, LoaderBytes, LoaderContainer, LoaderFunction,
     LoaderRegion,
 };
-use bias_core::prelude::Address;
 
 use bias_core::loader::elf::ELFExternalSymbolsRef;
 use binaryninja::binary_view::{BinaryView, BinaryViewBase, BinaryViewExt};
@@ -51,7 +51,7 @@ unsafe impl Sync for BNDBLoadedBinary<'_> {}
 impl<'a> BNDBLoadedBinary<'a> {
     pub fn new(view: Ref<BinaryView>, bytes: &'a [u8], lifter: &Lifter) -> Self {
         let arch = lifter.arch().to_owned();
-        let template = arch.external_thunk_template(lifter.translator());
+        let template = arch.external_thunk_template(lifter.language());
 
         let sections = view.sections();
         let extern_section = sections

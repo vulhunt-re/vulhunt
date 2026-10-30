@@ -2,18 +2,16 @@ use std::borrow::Borrow;
 use std::cell::Cell;
 use std::ops::{Index, IndexMut};
 
-use fugue::ir::disassembly::{ContextDatabase, IRBuilderArena, ParserContext};
-use fugue::ir::error::Error as IRError;
-use fugue::ir::Address;
+use fugue::lifter::runtime::pcode::{LiftingContext, PCodeOp};
 use smallvec::SmallVec;
 
 use super::flow::FlowInfo;
 use crate::define_mtable_key;
 use crate::ir::stmt::{Stmt, StmtCache};
-use crate::ir::{Insn, InsnTarget, Term};
+use crate::ir::{Address, Insn, InsnTarget, Term};
 use crate::kb::id::Identifiable;
 use crate::kb::table::UPointTable;
-use crate::lifter::Lifter;
+use crate::lifter::{Lifter, LifterError};
 
 define_mtable_key!(InsnInfoId, "CB541A76-A292-4D17-B290-919E41FB5E59");
 
@@ -38,23 +36,18 @@ impl Identifiable for InsnInfo {
 }
 
 impl InsnInfo {
-    pub(super) fn new<'a, 'az, A>(
-        lifter: &'a Lifter,
-        irb: &'az IRBuilderArena,
-        ctx: &mut ContextDatabase,
-        pctx: &mut ParserContext<'a, 'az>,
+    pub(super) fn new(
+        lifter: &Lifter,
+        context: &mut LiftingContext,
+        operations: &mut Vec<PCodeOp>,
         cache: &mut StmtCache,
-        address: A,
+        address: impl Into<Address>,
         bytes: &[u8],
-    ) -> Result<Self, IRError>
-    where
-        A: Into<Address>,
-    {
+    ) -> Result<Self, LifterError> {
         Self::new_with(
             lifter,
-            irb,
-            ctx,
-            pctx,
+            context,
+            operations,
             cache,
             Default::default(),
             address,
@@ -62,24 +55,20 @@ impl InsnInfo {
         )
     }
 
-    pub(super) fn new_with<'a, 'az, A>(
-        lifter: &'a Lifter,
-        irb: &'az IRBuilderArena,
-        ctx: &mut ContextDatabase,
-        pctx: &mut ParserContext<'a, 'az>,
+    pub(super) fn new_with(
+        lifter: &Lifter,
+        context: &mut LiftingContext,
+        operations: &mut Vec<PCodeOp>,
         cache: &mut StmtCache,
         id: InsnInfoId,
-        address: A,
+        address: impl Into<Address>,
         bytes: &[u8],
-    ) -> Result<Self, IRError>
-    where
-        A: Into<Address>,
-    {
+    ) -> Result<Self, LifterError> {
         let address = address.into();
 
         tracing::trace!("disassembling at {}", address);
 
-        let insn = Insn::lift_with(lifter, irb, ctx, pctx, cache, address, bytes)?;
+        let insn = Insn::lift_with(lifter, context, operations, cache, address, bytes)?;
 
         let properties = Cell::new(FlowInfo::empty());
         let targets = insn.branch_targets();

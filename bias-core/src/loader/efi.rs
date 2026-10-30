@@ -7,8 +7,7 @@ use std::path::{Path, PathBuf};
 use ahash::AHashSet;
 use bias_loader_uefi::{MicrocodeInfo, Uefi, UefiData, UefiModule, UefiNvramVar, UefiSection};
 use fugue::bytes::Endian;
-use fugue::ir::error::Error as LanguageDBError;
-use fugue::ir::{Address, LanguageDB};
+use fugue::sleigh::language::{LanguageDB, LanguageError};
 use goblin::pe::header::{COFF_MACHINE_ARM64, COFF_MACHINE_X86, COFF_MACHINE_X86_64};
 use goblin::pe::relocation::{
     BaseRelocations, IMAGE_REL_BASED_ABSOLUTE, IMAGE_REL_BASED_DIR64, IMAGE_REL_BASED_HIGH,
@@ -32,6 +31,7 @@ use crate::any::ProvidesStaticType;
 use crate::arch::aarch64::AARCH64;
 use crate::arch::x86::X86;
 use crate::data::strings::StringData;
+use crate::ir::Address;
 use crate::lifter::{Lifter, LifterBuilder, LifterBuilderError};
 use crate::symbols::pdb::PDBSymboliser;
 use crate::symbols::{Symbolise, SymboliseError};
@@ -40,21 +40,21 @@ use crate::Project;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
+    LanguageDB(#[from] LanguageError),
+    #[error(transparent)]
+    LifterBuilder(#[from] LifterBuilderError),
+    #[error(transparent)]
     LoaderFormat(#[from] goblin::error::Error),
     #[error(transparent)]
     LoaderIO(#[from] std::io::Error),
-    #[error(transparent)]
-    LanguageDB(#[from] LanguageDBError),
-    #[error(transparent)]
-    LifterBuilder(#[from] LifterBuilderError),
+    #[error("firmware loading error: {0}")]
+    UefiLoader(#[from] bias_loader_uefi::Error),
     #[error("unsupported architecture {0:x}")]
     UnsupportedArchitecture(u16),
     #[error("unsupported lifter convention: {0}")]
     UnsupportedConvention(&'static str),
     #[error("unsupported EFI binary format: {0}")]
     UnsupportedFormat(&'static str),
-    #[error("firmware loading error: {0}")]
-    UefiLoader(#[from] bias_loader_uefi::Error),
 }
 
 pub struct EFIFirmwareLoader<'a> {
@@ -237,15 +237,13 @@ impl<'a> EFIModule<'a> {
             .lookup(processor, Endian::Little, bits, variant)
             .ok_or_else(|| Error::UnsupportedArchitecture(arch))?;
 
-        let translator = LifterBuilder::build_or_cached(&builder)?;
+        let language = LifterBuilder::language(&builder)?;
 
-        let convention = translator
-            .compiler_conventions()
-            .get("efi")
-            .cloned()
+        let convention = language
+            .convention("efi")
             .ok_or_else(|| Error::UnsupportedConvention("efi"))?;
 
-        let lifter = Lifter::new_with(translator, convention, arch_info);
+        let lifter = Lifter::new_with(language, convention, arch_info)?;
 
         Ok((
             lifter,
@@ -552,19 +550,17 @@ impl<'a> EFILoader<'a> {
             .lookup(processor, Endian::Little, bits, variant)
             .ok_or_else(|| Error::UnsupportedArchitecture(arch))?;
 
-        let translator = LifterBuilder::build_or_cached(&builder)?;
+        let language = LifterBuilder::language(&builder)?;
 
-        if translator.compiler_conventions().is_empty() {
-            tracing::error!("no compiler conventions available for this translator");
+        if language.conventions().is_empty() {
+            tracing::error!("no compiler conventions available for this language");
         }
 
-        let convention = translator
-            .compiler_conventions()
-            .get("efi")
-            .cloned()
+        let convention = language
+            .convention("efi")
             .ok_or_else(|| Error::UnsupportedConvention("efi"))?;
 
-        let lifter = Lifter::new_with(translator, convention, arch_info);
+        let lifter = Lifter::new_with(language, convention, arch_info)?;
 
         Ok((
             lifter,

@@ -4,7 +4,6 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use ahash::{AHashMap as Map, AHashSet as Set};
-use fugue::ir::Address;
 use petgraph::algo::dominators::{simple_fast, Dominators};
 use petgraph::dot::{Config, Dot};
 use petgraph::stable_graph::{NodeIndex, StableDiGraph};
@@ -18,6 +17,7 @@ use crate::cfg::{DominanceFrontier, DominatorTree};
 use crate::ir::insn::{Insn, InsnChunk};
 use crate::ir::traits::*;
 use crate::ir::var::{LocalVars, SimpleVar, Var};
+use crate::ir::Address;
 use crate::kb::block::{ChunkedCodeBlock, CodeBlock, CodeBlockId, EmptyOrChunkedCodeBlock};
 use crate::kb::function::{Function, FunctionId};
 use crate::kb::id::Identifiable;
@@ -111,7 +111,7 @@ pub struct SSAGraphDot<'a, V> {
 
 impl<'a, V> fmt::Debug for SSAGraphDot<'a, V>
 where
-    V: Debug + for<'t> TranslatorDisplay<'t, 't>,
+    V: Debug + for<'t> LanguageDisplay<'t, 't>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <Self as fmt::Display>::fmt(self, f)
@@ -120,10 +120,10 @@ where
 
 impl<'a, V> fmt::Display for SSAGraphDot<'a, V>
 where
-    V: Debug + for<'t> TranslatorDisplay<'t, 't>,
+    V: Debug + for<'t> LanguageDisplay<'t, 't>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let translator = Some(self.project.lifter().translator());
+        let language = Some(self.project.lifter().language());
         write!(
             f,
             "{:?}",
@@ -134,7 +134,7 @@ where
                 &|_, nr| format!(
                     "shape = box, label = \"{}\\l\"",
                     nr.weight()
-                        .display_with(translator)
+                        .display_with(language)
                         .to_string()
                         .replace("\n", "\\l")
                 ),

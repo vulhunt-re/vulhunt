@@ -71,7 +71,7 @@ pub enum ComponentLoaderError {
     #[error(transparent)]
     TELoader(#[from] bias_core::loader::te::Error),
     #[error(transparent)]
-    LanguageDB(#[from] bias_core::fugue::ir::error::Error),
+    LanguageDB(#[from] bias_core::fugue::sleigh::language::LanguageError),
     #[error(transparent)]
     LoaderIO(#[from] std::io::Error),
     #[error(transparent)]

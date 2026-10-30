@@ -30,7 +30,7 @@ impl OverrideVarAt {
 
     pub fn new_addr(address: impl Into<Address>, var: Var, val: impl Into<Address>) -> Self {
         let size = var.nbits();
-        let value = BitVec::from_u64(u64::from(val.into()), size as usize);
+        let value = BitVec::from_u64(u64::from(val.into()), size);
 
         Self::new(address, var, value)
     }

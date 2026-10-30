@@ -1,6 +1,8 @@
 pub use crate::fugue::bv::BitVec;
-pub use crate::fugue::bytes::Order;
-pub use crate::fugue::ir::Address;
+pub use crate::fugue::bytes::ByteOrder;
+
+pub mod address;
+pub use address::Address;
 
 pub mod branch;
 pub use branch::{BranchTarget, BranchTargetFormatter};

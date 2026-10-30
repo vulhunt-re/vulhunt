@@ -1,6 +1,4 @@
-use fugue::ir::Address;
-
-use crate::ir::Location;
+use crate::ir::{Address, Location};
 
 pub mod guided;
 pub mod xforce;

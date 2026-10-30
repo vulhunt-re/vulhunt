@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use fugue::bv::BitVec;
-use fugue::ir::AddressSpaceId;
+use fugue::sleigh::language::spaces::AddressSpaceId;
 use smallvec::SmallVec;
 
 use crate::ir::expr::ValHint;

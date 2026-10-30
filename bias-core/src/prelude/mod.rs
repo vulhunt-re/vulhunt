@@ -1,9 +1,12 @@
 pub use ahash::RandomState as AHashRandomState;
 pub use fugue::arch::ArchitectureDef;
-pub use fugue::bytes::{ByteCast, Endian, Order, BE, LE};
-pub use fugue::ir::convention::{Convention, Prototype, PrototypeEntry, PrototypeOperand, *};
-pub use fugue::ir::language::{Language, LanguageBuilder, LanguageDB};
-pub use fugue::ir::{AddressSpace, AddressSpaceId, SpaceManager, Translator};
+pub use fugue::bytes::{ByteCast, ByteOrder, Endian, BE, LE};
+pub use fugue::lifter::runtime::convention::{
+    Convention, Prototype, PrototypeEntry, PrototypeOperand, ReturnAddress,
+};
+pub use fugue::lifter::runtime::language::Language;
+pub use fugue::sleigh::language::spaces::AddressSpaceId;
+pub use fugue::sleigh::language::LanguageDB;
 pub use petgraph as graph;
 pub use petgraph::graph::NodeIndex;
 pub use petgraph::visit::EdgeRef;
@@ -32,8 +35,8 @@ pub use crate::ir::term::{Term, TermMut};
 pub use crate::ir::traits::BitSize;
 pub use crate::ir::{
     Address, BinOp, BinRel, BitVec, BranchTarget, EnumVariant, Expr, FloatKind, FunctionArg,
-    FunctionArgProps, Insn, InsnTarget, Location, SimpleVar, Stmt, StructField, ToAddress,
-    TranslatorDisplay, Type, TypeKind, UnOp, UnRel, UnionVariant, Var, VarView, Variable,
+    FunctionArgProps, Insn, InsnTarget, LanguageDisplay, Location, SimpleVar, Stmt, StructField,
+    ToAddress, Type, TypeKind, UnOp, UnRel, UnionVariant, Var, VarView, Variable,
 };
 pub use crate::kb::block::{CodeBlock, CodeBlockId, CodeBlockTable};
 pub use crate::kb::function::{
@@ -73,7 +76,7 @@ pub use crate::symbols::{SymbolTable, Symbolise, SymboliseError};
 
 pub mod eval {
     pub mod state {
-        pub use fuguex_state::{flat, paged, register, traits};
+        pub use crate::eval::state::{flat, paged, register, traits};
     }
 }
 

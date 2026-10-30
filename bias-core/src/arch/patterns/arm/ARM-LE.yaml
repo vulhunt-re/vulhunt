@@ -1,4 +1,5 @@
-architecture: ARM:LE:32:*:*
+constraints:
+  - language: ARM:LE:32:*:*
 author: Binarly
 patterns:
   - pattern-group:

@@ -93,7 +93,7 @@ impl AliasValue {
     }
 
     pub fn stack_var(lifter: &Lifter) -> Self {
-        Self::S(BitVec::zero(lifter.address_bits() as _))
+        Self::S(BitVec::zero(lifter.address_bits()))
     }
 
     pub fn val(value: impl Into<BitVec>) -> Self {
@@ -288,7 +288,7 @@ impl AliasValue {
     pub fn extract(self, offset: usize, bytes: usize) -> Self {
         match self {
             Self::V(ref v) => {
-                let vbytes = v.bits() / 8;
+                let vbytes = v.bits() as usize / 8;
                 let nbytes = offset + bytes;
 
                 if nbytes > vbytes {
@@ -296,9 +296,9 @@ impl AliasValue {
                 }
 
                 if offset > 0 {
-                    Self::V((v >> (offset as u32 * 8)).unsigned_cast(bytes * 8))
+                    Self::V((v >> (offset as u32 * 8)).unsigned_cast(bytes as u32 * 8))
                 } else {
-                    Self::V(v.unsigned_cast(bytes * 8))
+                    Self::V(v.unsigned_cast(bytes as u32 * 8))
                 }
             }
             Self::S(_) if offset == 0 => self,
@@ -312,14 +312,14 @@ impl AliasValue {
         match self {
             Self::V(mut v) => match val {
                 None => {
-                    v.unsigned_cast_assign(bytes * 8);
+                    v.unsigned_cast_assign(bytes as u32 * 8);
                     if offset > 0 {
                         v <<= offset as u32 * 8;
                     }
                     *val = Some(Self::V(v));
                 }
                 Some(Self::V(old)) => {
-                    let nbits = bytes * 8;
+                    let nbits = bytes as u32 * 8;
 
                     if old.bits() == v.bits() && offset == 0 {
                         v.unsigned_cast_assign(nbits);
@@ -383,7 +383,7 @@ fn incoming_map(
             let avar = lifter.register_map().parent(&reg).unwrap_or(reg);
             let value = (reg != avar)
                 .then(|| {
-                    let mut val = val.unsigned_cast(avar.nbits() as _);
+                    let mut val = val.unsigned_cast(avar.nbits());
                     let voff = (reg.offset() - avar.offset()) as u32 * 8;
                     if voff != 0 {
                         val <<= voff;
@@ -416,8 +416,8 @@ impl<'a> AliasVisitor<'a> {
             call_target: None,
             stack_pointer,
             extra_pop: BitVec::from_u64(
-                lifter.default_prototype().extra_pop(),
-                stack_pointer.nbits() as _,
+                lifter.default_prototype().extra_pop().unwrap_or(0),
+                stack_pointer.nbits(),
             ),
         }
     }
@@ -450,8 +450,8 @@ impl<'a> AliasVisitor<'a> {
                     rvar.address()
                         .map(|addr| {
                             AliasValue::ptr0(
-                                BitVec::from_u64(addr.offset(), self.stack_pointer.nbits() as _),
-                                BitVec::zero(self.stack_pointer.nbits() as _),
+                                BitVec::from_u64(addr.offset(), self.stack_pointer.nbits()),
+                                BitVec::zero(self.stack_pointer.nbits()),
                             )
                         })
                         .unwrap_or(AliasValue::Top)
@@ -529,7 +529,7 @@ impl<'a> AliasVisitor<'a> {
                 } else if pval.is_bot() {
                     AliasValue::Bot
                 } else {
-                    AliasValue::ptr(pval, BitVec::zero(self.stack_pointer.nbits() as _))
+                    AliasValue::ptr(pval, BitVec::zero(self.stack_pointer.nbits()))
                 }
             }
             Expr::Concat(_lexpr, _rexpr) | Expr::BinRel(_, _lexpr, _rexpr) => AliasValue::Top,

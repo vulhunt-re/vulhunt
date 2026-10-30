@@ -358,7 +358,7 @@ where
 
         let sig_tag = checker
             .signature_arch_tags()
-            .get(self.project.lifter().translator().architecture())
+            .get(&self.project.lifter().architecture())
             .copied()
             .unwrap_or_default();
 
@@ -930,7 +930,7 @@ impl<'a> CallSiteContext<'a> {
             if let Some((last_off, last_buf)) = regions.last_mut() {
                 let last_len = last_buf.len();
                 if *last_off + last_len as i64 == *off {
-                    last_buf.extend(std::iter::repeat(0u8).take(val.bits() / 8));
+                    last_buf.extend(std::iter::repeat(0u8).take(val.bits() as usize / 8));
                     if is_be {
                         val.to_be_bytes(&mut last_buf[last_len..]);
                     } else {
@@ -941,7 +941,7 @@ impl<'a> CallSiteContext<'a> {
                 }
             }
 
-            let mut buf = vec![0u8; val.bits() / 8];
+            let mut buf = vec![0u8; val.bits() as usize / 8];
             if is_be {
                 val.to_be_bytes(&mut buf);
             } else {
@@ -965,7 +965,7 @@ impl<'a> CallSiteContext<'a> {
                     .and_then(|vt| vt.v.stack_delta())?;
                 let delta = d
                     .wrapping_add(shift)
-                    .wrapping_sub(self.proto.extra_pop() as i64);
+                    .wrapping_sub(self.proto.extra_pop().unwrap_or(0) as i64);
 
                 self.aliases.outgoing_stack().get(&delta)
             }
@@ -985,7 +985,7 @@ impl<'a> CallSiteContext<'a> {
                     .and_then(|vt| vt.v.stack_delta())?;
                 let delta = d
                     .wrapping_add(shift)
-                    .wrapping_sub(self.proto.extra_pop() as i64);
+                    .wrapping_sub(self.proto.extra_pop().unwrap_or(0) as i64);
 
                 self.aliases.outgoing_stack().get(&delta)
             }
@@ -1005,7 +1005,7 @@ impl<'a> CallSiteContext<'a> {
                     .and_then(|vt| vt.v.stack_delta())?;
                 let delta = d
                     .wrapping_add(shift)
-                    .wrapping_sub(self.proto.extra_pop() as i64);
+                    .wrapping_sub(self.proto.extra_pop().unwrap_or(0) as i64);
 
                 aliases.stack_variables().get(&delta)
             }
@@ -1025,7 +1025,7 @@ impl<'a> CallSiteContext<'a> {
                     .and_then(|vt| vt.v.stack_delta())?;
                 let delta = d
                     .wrapping_add(shift)
-                    .wrapping_sub(self.proto.extra_pop() as i64);
+                    .wrapping_sub(self.proto.extra_pop().unwrap_or(0) as i64);
 
                 aliases.stack_variables().get(&delta)
             }
@@ -2175,7 +2175,10 @@ impl<'a> UserData for SyntaxMatchResult<'a> {
         methods.add_method("binding_of_match", |_lua, this, var: Value| {
             if let Some(var) = var.as_string().and_then(|s| s.to_str().ok()) {
                 return Ok(this.results.get(0).and_then(|instance| {
-                    instance.variables.get(&*var).and_then(|v| v.as_ref().map(ToOwned::to_owned))
+                    instance
+                        .variables
+                        .get(&*var)
+                        .and_then(|v| v.as_ref().map(ToOwned::to_owned))
                 }));
             }
 

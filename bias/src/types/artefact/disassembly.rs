@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::ops::{Bound, Range, RangeBounds};
 
-use bias_core::fugue::ir::disassembly::{ContextDatabase, IRBuilderArena, ParserContext};
+use bias_core::fugue::lifter::LiftingContext;
 use bias_core::prelude::graph::visit::{IntoEdgeReferences, IntoNodeReferences};
 use bias_core::prelude::*;
 
@@ -266,15 +266,10 @@ impl DisassemblyListing {
         let mut ids = BTreeMap::new(); // NodeIndex -> DisassemblyBlockId (u64)
         let blks = project.code_blocks();
 
-        let irb = project.lifter().irb(1024);
-        let mut pctx = ParserContext::empty(&irb, project.lifter().translator().manager());
-        let mut dctx = project.lifter().context();
+        let mut context = project.lifter().lifting_context();
 
         for (nx, &bid) in cfg.node_references() {
-            ids.insert(
-                nx,
-                slf.push_block(project, &irb, &mut pctx, &mut dctx, &blks[bid]),
-            );
+            ids.insert(nx, slf.push_block(project, &mut context, &blks[bid]));
         }
 
         for edge in cfg.edge_references() {
@@ -287,12 +282,10 @@ impl DisassemblyListing {
         slf
     }
 
-    fn push_block<'ad, 'ap>(
+    fn push_block(
         &mut self,
-        project: &'ad Project,
-        irb: &'ad IRBuilderArena,
-        pctx: &mut ParserContext<'ad, 'ap>,
-        dctx: &mut ContextDatabase,
+        project: &Project,
+        context: &mut LiftingContext,
         blk: &CodeBlock,
     ) -> DisassemblyBlockId {
         let id = self.blocks.len();
@@ -305,15 +298,9 @@ impl DisassemblyListing {
                     address: insn.address,
                     value: {
                         let bytes = project.memory().view_bytes_from(insn.address()).unwrap();
-                        let insnt = Insn::disassemble(
-                            project.lifter(),
-                            &irb,
-                            dctx,
-                            pctx,
-                            insn.address(),
-                            bytes,
-                        )
-                        .unwrap();
+                        let insnt =
+                            Insn::disassemble(project.lifter(), context, insn.address(), bytes)
+                                .unwrap();
 
                         if insnt.operands.is_empty() {
                             String::from(&*insnt.mnemonic)

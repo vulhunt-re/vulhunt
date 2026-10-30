@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use bias_core::fugue::ir::AddressSpaceId;
+use bias_core::fugue::sleigh::language::spaces::AddressSpaceId;
 use bias_core::ir::term::traits::{AsTerm, ClassType, OpType, SubType};
 use bias_core::ir::{Address, BitSize, BitVec, Var, Variable as _};
 

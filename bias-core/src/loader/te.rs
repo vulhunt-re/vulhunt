@@ -3,8 +3,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use fugue::bytes::Endian;
-use fugue::ir::error::Error as LanguageDBError;
-use fugue::ir::{Address, LanguageDB};
+use fugue::sleigh::language::{LanguageDB, LanguageError};
 use goblin::pe::utils::PESectionTable;
 use goblin::te::header::{TE_MACHINE_X86, TE_MACHINE_X86_64};
 use goblin::te::section_table::{IMAGE_SCN_CNT_CODE, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_WRITE};
@@ -16,18 +15,19 @@ use super::{
     LoadedBinary, Loader, LoaderBlock, LoaderBytes, LoaderContainer, LoaderFunction, LoaderRegion,
 };
 use crate::arch::x86::X86;
+use crate::ir::Address;
 use crate::lifter::{Lifter, LifterBuilder, LifterBuilderError};
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
+    LanguageDB(#[from] LanguageError),
+    #[error(transparent)]
+    LifterBuilder(#[from] LifterBuilderError),
+    #[error(transparent)]
     LoaderFormat(#[from] goblin::error::Error),
     #[error(transparent)]
     LoaderIO(#[from] std::io::Error),
-    #[error(transparent)]
-    LanguageDB(#[from] LanguageDBError),
-    #[error(transparent)]
-    LifterBuilder(#[from] LifterBuilderError),
     #[error("unsupported architecture {0:x}")]
     UnsupportedArchitecture(u16),
     #[error("unsupported lifter convention: {0}")]
@@ -82,16 +82,14 @@ impl<'a> TELoader<'a> {
             .lookup(processor, Endian::Little, bits, "default")
             .ok_or_else(|| Error::UnsupportedArchitecture(arch))?;
 
-        let translator = LifterBuilder::build_or_cached(&builder)?;
+        let language = LifterBuilder::language(&builder)?;
 
-        let convention = translator
-            .compiler_conventions()
-            .get(&*self.convention)
-            .cloned()
-            .or_else(|| translator.compiler_conventions().get("default").cloned())
+        let convention = language
+            .convention(&self.convention)
+            .or_else(|| language.convention("default"))
             .ok_or_else(|| Error::UnsupportedConvention(self.convention.clone()))?;
 
-        let lifter = Lifter::new_with(translator, convention, arch_info);
+        let lifter = Lifter::new_with(language, convention, arch_info)?;
 
         Ok((
             lifter,

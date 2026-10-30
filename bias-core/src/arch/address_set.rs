@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::hash::BuildHasher;
 
-use fugue::ir::Address;
+use crate::ir::Address;
 
 pub trait AddressSet {
     fn contains_address(&self, address: impl Into<Address>) -> bool;

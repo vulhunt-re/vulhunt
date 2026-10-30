@@ -1,9 +1,9 @@
 use std::ops::Range;
 
-use fugue::ir::Address;
 use iset::IntervalMap;
 
 use crate::analyses::xrefs::XRefDB;
+use crate::ir::Address;
 use crate::kb::block::CodeBlockId;
 use crate::kb::id::Identifiable;
 use crate::kb::uuid;

@@ -61,7 +61,7 @@ pub trait ExternalsProvider: LoadedBinary + RelocatableBinary + Symbolise + Size
     {
         tracing::trace!(
             "loading stubs from provider ({}:{})",
-            lifter.translator().architecture(),
+            lifter.language().id(),
             lifter.convention().name()
         );
 
@@ -88,12 +88,7 @@ pub trait ExternalsProvider: LoadedBinary + RelocatableBinary + Symbolise + Size
         let Some(source_base) = target.memory().find_free_region(
             source_size,
             source_alignment,
-            target
-                .lifter()
-                .translator()
-                .manager()
-                .default_space_ref()
-                .highest_offset(),
+            target.lifter().language().address_upper_bound(),
         ) else {
             return Err(ExternalsProviderError::InsufficientSpace);
         };

@@ -7,10 +7,10 @@ use std::ops::{Range, RangeInclusive};
 use arrayvec::ArrayVec;
 use bitflags::bitflags;
 use dyn_clone::DynClone;
-use fugue::fspec::pattern::PatternSetMatchIter;
-pub use fugue::ir::disassembly::context::ContextBitRange;
-use fugue::ir::disassembly::ContextDatabase;
-use fugue::ir::{Address, AddressValue, Translator};
+pub use fugue::lifter::runtime::context::ContextBitRange;
+use fugue::lifter::runtime::language::Language;
+use fugue::lifter::runtime::pcode::LiftingContext;
+use fugue::specs::pattern::PatternMatchIter;
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::EdgeReference;
 use petgraph::visit::EdgeRef;
@@ -29,7 +29,7 @@ use self::xtensa::{ARCH_XTENSA, XTENSA};
 use crate::cfg::block::BlockInfoTable;
 use crate::cfg::function::FunctionStarts;
 use crate::cfg::{FlowKind, ICFG};
-use crate::ir::{Expr, Term, Var};
+use crate::ir::{Address, Expr, Term, Var};
 use crate::kb::block::CodeBlockId;
 use crate::kb::function::{Function, FunctionId};
 use crate::kb::id::Identifiable;
@@ -341,22 +341,17 @@ impl ContextUpdates {
     }
 
     #[inline]
-    pub fn apply(&self, address: AddressValue, context: &mut ContextDatabase) {
+    pub fn apply(&self, address: u64, context: &mut LiftingContext) {
         for ContextUpdate { bits, value } in self.0.iter() {
-            tracing::trace!("setting context bits {bits:?} to {value} at {address}");
+            tracing::trace!("setting context bits {bits:?} to {value} at {address:#x}");
             context.set_variable_by_bits(bits, address, *value);
         }
     }
 
     #[inline]
-    pub fn apply_range(
-        &self,
-        from: AddressValue,
-        to: Option<AddressValue>,
-        context: &mut ContextDatabase,
-    ) {
+    pub fn apply_range(&self, from: u64, to: Option<u64>, context: &mut LiftingContext) {
         for ContextUpdate { bits, value } in self.0.iter() {
-            tracing::trace!("setting context bits {bits:?} to {value} from {from} to {to:?}");
+            tracing::trace!("setting context bits {bits:?} to {value} from {from:#x} to {to:x?}");
             context.set_variable_region_by_bits(bits, from, to, *value);
         }
     }
@@ -402,21 +397,27 @@ impl FunctionThunkTemplate {
     }
 }
 
+fn register_var(language: &Language, name: &str) -> Option<Var> {
+    language
+        .register_by_name(name)
+        .map(|varnode| Var::from_varnode(language, &varnode))
+}
+
 pub trait Arch: Send + Sync {
     fn id(&self) -> Uuid;
 
     #[allow(unused)]
-    fn flags(&self, translator: &Translator) -> Vec<Flag> {
+    fn flags(&self, language: &'static Language) -> Vec<Flag> {
         Vec::with_capacity(0)
     }
 
     #[allow(unused)]
-    fn frame_pointer(&self, translator: &Translator) -> Option<Var> {
+    fn frame_pointer(&self, language: &'static Language) -> Option<Var> {
         None
     }
 
     #[allow(unused)]
-    fn gprs(&self, translator: &Translator) -> Vec<Var> {
+    fn gprs(&self, language: &'static Language) -> Vec<Var> {
         Vec::with_capacity(0)
     }
 
@@ -474,7 +475,7 @@ pub trait Arch: Send + Sync {
         .then(|| (edge.source(), edge.target()))
     }
 
-    fn external_thunk_template(&self, translator: &Translator) -> FunctionThunkTemplate;
+    fn external_thunk_template(&self, language: &'static Language) -> FunctionThunkTemplate;
 
     fn expand_function_block(
         &self,
@@ -639,7 +640,7 @@ pub trait Arch: Send + Sync {
         &self,
         func: &mut Function,
         lifter: &Lifter,
-        ctxt: &ContextDatabase,
+        ctxt: &LiftingContext,
         icfg: &ICFG,
     ) {
     }
@@ -654,9 +655,9 @@ pub trait Arch: Send + Sync {
         &self,
         address: Address,
         lifter: &Lifter,
-        ctx: &ContextDatabase,
+        ctx: &LiftingContext,
     ) -> Option<(Address, usize)> {
-        let alignment = lifter.translator().alignment();
+        let alignment = lifter.language().address_alignment();
         let mask = alignment as u64 - 1;
         let naddress = Address::from(address.offset() & !mask);
 
@@ -668,7 +669,7 @@ pub trait Arch: Send + Sync {
         &self,
         lifter: &Lifter,
         bytes: &'a [u8],
-    ) -> Option<PatternSetMatchIter<'a>> {
+    ) -> Option<PatternMatchIter<'a>> {
         None
     }
 
@@ -676,7 +677,7 @@ pub trait Arch: Send + Sync {
     fn for_each_function_by_pattern<F>(
         &self,
         lifter: &Lifter,
-        ctx: &mut ContextDatabase,
+        ctx: &mut LiftingContext,
         segment: &Region,
         f: F,
     ) where
@@ -688,11 +689,11 @@ pub trait Arch: Send + Sync {
 pub trait ErasedArch: DynClone + Send + Sync {
     fn id(&self) -> Uuid;
 
-    fn flags(&self, translator: &Translator) -> Vec<Flag>;
+    fn flags(&self, language: &'static Language) -> Vec<Flag>;
 
-    fn frame_pointer(&self, translator: &Translator) -> Option<Var>;
+    fn frame_pointer(&self, language: &'static Language) -> Option<Var>;
 
-    fn gprs(&self, translator: &Translator) -> Vec<Var>;
+    fn gprs(&self, language: &'static Language) -> Vec<Var>;
 
     fn is_nonsense_pattern(&self, bytes: &[u8]) -> bool;
 
@@ -716,7 +717,7 @@ pub trait ErasedArch: DynClone + Send + Sync {
         functions: &FunctionStarts,
     ) -> Option<(NodeIndex, NodeIndex)>;
 
-    fn external_thunk_template(&self, translator: &Translator) -> FunctionThunkTemplate;
+    fn external_thunk_template(&self, language: &'static Language) -> FunctionThunkTemplate;
 
     fn expand_function_block(
         &self,
@@ -732,7 +733,7 @@ pub trait ErasedArch: DynClone + Send + Sync {
         &self,
         func: &mut Function,
         lifter: &Lifter,
-        ctxt: &ContextDatabase,
+        ctxt: &LiftingContext,
         icfg: &ICFG,
     );
 
@@ -742,19 +743,19 @@ pub trait ErasedArch: DynClone + Send + Sync {
         &self,
         address: Address,
         lifter: &Lifter,
-        ctx: &ContextDatabase,
+        ctx: &LiftingContext,
     ) -> Option<(Address, usize)>;
 
     fn function_start_patterns<'a>(
         &self,
         lifter: &Lifter,
         bytes: &'a [u8],
-    ) -> Option<PatternSetMatchIter<'a>>;
+    ) -> Option<PatternMatchIter<'a>>;
 
     fn for_each_function_by_pattern(
         &self,
         lifter: &Lifter,
-        ctx: &mut ContextDatabase,
+        ctx: &mut LiftingContext,
         segment: &Region,
         f: &mut dyn FnMut(Address),
     );
@@ -769,16 +770,16 @@ where
         <T as Arch>::id(&**self)
     }
 
-    fn flags(&self, translator: &Translator) -> Vec<Flag> {
-        <T as Arch>::flags(&self, translator)
+    fn flags(&self, language: &'static Language) -> Vec<Flag> {
+        <T as Arch>::flags(&self, language)
     }
 
-    fn frame_pointer(&self, translator: &Translator) -> Option<Var> {
-        <T as Arch>::frame_pointer(&self, translator)
+    fn frame_pointer(&self, language: &'static Language) -> Option<Var> {
+        <T as Arch>::frame_pointer(&self, language)
     }
 
-    fn gprs(&self, translator: &Translator) -> Vec<Var> {
-        <T as Arch>::gprs(&self, translator)
+    fn gprs(&self, language: &'static Language) -> Vec<Var> {
+        <T as Arch>::gprs(&self, language)
     }
 
     fn is_nonsense_pattern(&self, bytes: &[u8]) -> bool {
@@ -819,15 +820,15 @@ where
         <T as Arch>::is_tail_call(&self, edge, icfg, blocks, functions)
     }
 
-    fn external_thunk_template(&self, translator: &Translator) -> FunctionThunkTemplate {
-        <T as Arch>::external_thunk_template(&self, translator)
+    fn external_thunk_template(&self, language: &'static Language) -> FunctionThunkTemplate {
+        <T as Arch>::external_thunk_template(&self, language)
     }
 
     fn compute_function_properties(
         &self,
         func: &mut Function,
         lifter: &Lifter,
-        ctxt: &ContextDatabase,
+        ctxt: &LiftingContext,
         icfg: &ICFG,
     ) {
         <T as Arch>::compute_function_properties(&self, func, lifter, ctxt, icfg)
@@ -841,7 +842,7 @@ where
         &self,
         address: Address,
         lifter: &Lifter,
-        ctx: &ContextDatabase,
+        ctx: &LiftingContext,
     ) -> Option<(Address, usize)> {
         <T as Arch>::compute_aligned_address(&self, address, lifter, ctx)
     }
@@ -862,14 +863,14 @@ where
         &self,
         lifter: &Lifter,
         bytes: &'a [u8],
-    ) -> Option<PatternSetMatchIter<'a>> {
+    ) -> Option<PatternMatchIter<'a>> {
         <T as Arch>::function_start_patterns(&self, lifter, bytes)
     }
 
     fn for_each_function_by_pattern<F>(
         &self,
         lifter: &Lifter,
-        ctx: &mut ContextDatabase,
+        ctx: &mut LiftingContext,
         segment: &Region,
         mut f: F,
     ) where
@@ -884,16 +885,16 @@ impl Arch for dyn ErasedArch {
         Self::id(&*self)
     }
 
-    fn flags(&self, translator: &Translator) -> Vec<Flag> {
-        Self::flags(&*self, translator)
+    fn flags(&self, language: &'static Language) -> Vec<Flag> {
+        Self::flags(&*self, language)
     }
 
-    fn frame_pointer(&self, translator: &Translator) -> Option<Var> {
-        Self::frame_pointer(&*self, translator)
+    fn frame_pointer(&self, language: &'static Language) -> Option<Var> {
+        Self::frame_pointer(&*self, language)
     }
 
-    fn gprs(&self, translator: &Translator) -> Vec<Var> {
-        Self::gprs(&*self, translator)
+    fn gprs(&self, language: &'static Language) -> Vec<Var> {
+        Self::gprs(&*self, language)
     }
 
     fn is_nonsense_pattern(&self, bytes: &[u8]) -> bool {
@@ -934,15 +935,15 @@ impl Arch for dyn ErasedArch {
         Self::is_tail_call(&*self, edge, icfg, blocks, functions)
     }
 
-    fn external_thunk_template(&self, translator: &Translator) -> FunctionThunkTemplate {
-        Self::external_thunk_template(&*self, translator)
+    fn external_thunk_template(&self, language: &'static Language) -> FunctionThunkTemplate {
+        Self::external_thunk_template(&*self, language)
     }
 
     fn compute_function_properties(
         &self,
         func: &mut Function,
         lifter: &Lifter,
-        ctxt: &ContextDatabase,
+        ctxt: &LiftingContext,
         icfg: &ICFG,
     ) {
         Self::compute_function_properties(&*self, func, lifter, ctxt, icfg);
@@ -956,7 +957,7 @@ impl Arch for dyn ErasedArch {
         &self,
         address: Address,
         lifter: &Lifter,
-        ctx: &ContextDatabase,
+        ctx: &LiftingContext,
     ) -> Option<(Address, usize)> {
         Self::compute_aligned_address(&*self, address, lifter, ctx)
     }
@@ -977,14 +978,14 @@ impl Arch for dyn ErasedArch {
         &self,
         lifter: &Lifter,
         bytes: &'a [u8],
-    ) -> Option<PatternSetMatchIter<'a>> {
+    ) -> Option<PatternMatchIter<'a>> {
         Self::function_start_patterns(&*self, lifter, bytes)
     }
 
     fn for_each_function_by_pattern<F>(
         &self,
         lifter: &Lifter,
-        ctx: &mut ContextDatabase,
+        ctx: &mut LiftingContext,
         segment: &Region,
         mut f: F,
     ) where
@@ -1002,16 +1003,16 @@ where
         <T as Arch>::id(&self)
     }
 
-    fn flags(&self, translator: &Translator) -> Vec<Flag> {
-        <T as Arch>::flags(&self, translator)
+    fn flags(&self, language: &'static Language) -> Vec<Flag> {
+        <T as Arch>::flags(&self, language)
     }
 
-    fn frame_pointer(&self, translator: &Translator) -> Option<Var> {
-        <T as Arch>::frame_pointer(&self, translator)
+    fn frame_pointer(&self, language: &'static Language) -> Option<Var> {
+        <T as Arch>::frame_pointer(&self, language)
     }
 
-    fn gprs(&self, translator: &Translator) -> Vec<Var> {
-        <T as Arch>::gprs(&self, translator)
+    fn gprs(&self, language: &'static Language) -> Vec<Var> {
+        <T as Arch>::gprs(&self, language)
     }
 
     fn is_nonsense_pattern(&self, bytes: &[u8]) -> bool {
@@ -1052,8 +1053,8 @@ where
         <T as Arch>::is_tail_call(&self, edge, icfg, blocks, functions)
     }
 
-    fn external_thunk_template(&self, translator: &Translator) -> FunctionThunkTemplate {
-        <T as Arch>::external_thunk_template(&self, translator)
+    fn external_thunk_template(&self, language: &'static Language) -> FunctionThunkTemplate {
+        <T as Arch>::external_thunk_template(&self, language)
     }
 
     fn expand_function_block(
@@ -1072,7 +1073,7 @@ where
         &self,
         func: &mut Function,
         lifter: &Lifter,
-        ctxt: &ContextDatabase,
+        ctxt: &LiftingContext,
         icfg: &ICFG,
     ) {
         <T as Arch>::compute_function_properties(&self, func, lifter, ctxt, icfg)
@@ -1086,7 +1087,7 @@ where
         &self,
         address: Address,
         lifter: &Lifter,
-        ctx: &ContextDatabase,
+        ctx: &LiftingContext,
     ) -> Option<(Address, usize)> {
         <T as Arch>::compute_aligned_address(&self, address, lifter, ctx)
     }
@@ -1095,14 +1096,14 @@ where
         &self,
         lifter: &Lifter,
         bytes: &'a [u8],
-    ) -> Option<PatternSetMatchIter<'a>> {
+    ) -> Option<PatternMatchIter<'a>> {
         <T as Arch>::function_start_patterns(&self, lifter, bytes)
     }
 
     fn for_each_function_by_pattern(
         &self,
         lifter: &Lifter,
-        ctx: &mut ContextDatabase,
+        ctx: &mut LiftingContext,
         segment: &Region,
         f: &mut dyn FnMut(Address),
     ) {
@@ -1120,7 +1121,7 @@ impl Arch for DefaultArch {
         ARCH_DEFAULT
     }
 
-    fn external_thunk_template(&self, _translator: &Translator) -> FunctionThunkTemplate {
+    fn external_thunk_template(&self, _language: &'static Language) -> FunctionThunkTemplate {
         FunctionThunkTemplate::new([0x00])
     }
 }

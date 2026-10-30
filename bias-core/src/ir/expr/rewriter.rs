@@ -5,8 +5,8 @@ use egg::{
     Analysis, CostFunction, EGraph, ENodeOrVar, Extractor, Id, Language, LanguageChildren, Pattern,
     PatternAst, RecExpr, Rewrite, Runner, Var as PatternVar,
 };
+use fugue::sleigh::language::spaces::AddressSpaceId;
 
-use crate::fugue::ir::AddressSpaceId;
 use crate::ir::{BinOp, BinRel, BitSize, BitVec, Expr, Term, Type, UnOp, UnRel, ValHint, Var};
 use crate::kb::{Lazy, Ustr};
 
@@ -839,10 +839,10 @@ impl Analysis<ExprT> for ConstFolding {
 
                         if tsign {
                             // signed cast
-                            v.signed_cast(tbits as usize).into()
+                            v.signed_cast(tbits).into()
                         } else {
                             // unsigned cast
-                            v.unsigned_cast(tbits as usize).into()
+                            v.unsigned_cast(tbits).into()
                         }
                     },
                     |_, _| ConstOrMeta::S(t.nbits(), t.is_bool()),
@@ -852,7 +852,7 @@ impl Analysis<ExprT> for ConstFolding {
             ExprT::UnOp(op, e) => x(e).lift1(|e, is_bool| match op {
                 UnOp::NOT => {
                     if is_bool {
-                        ConstOrMeta::C(e.not() & BitVec::one(e.nbits() as usize), true)
+                        ConstOrMeta::C(e.not() & BitVec::one(e.nbits()), true)
                     } else {
                         e.not().into()
                     }
@@ -937,8 +937,8 @@ impl Analysis<ExprT> for ConstFolding {
                     let tbits = e1.nbits() + e2.nbits();
                     let sbits = e2.nbits();
 
-                    let e1x = e1.unsigned_cast(tbits as usize) << sbits;
-                    let e2x = e2.unsigned_cast(tbits as usize);
+                    let e1x = e1.unsigned_cast(tbits) << sbits;
+                    let e2x = e2.unsigned_cast(tbits);
 
                     (e1x | e2x).into()
                 },
@@ -950,9 +950,9 @@ impl Analysis<ExprT> for ConstFolding {
                         e.clone().into()
                     } else {
                         if *l > 0 {
-                            (e >> *l).unsigned().cast((h - l) as usize)
+                            (e >> *l).unsigned().cast(h - l)
                         } else {
-                            e.unsigned_cast((h - l) as usize)
+                            e.unsigned_cast(h - l)
                         }
                         .into()
                     }
@@ -978,14 +978,14 @@ mod test {
     use egg::{Applier, AstSize, ENodeOrVar, Pattern, PatternAst, Var as PVar};
 
     use super::*;
-    use crate::prelude::{AddressSpace, Var, BE};
+    use crate::prelude::{Var, BE};
 
     #[test]
     fn test_default_rules() {
         let mut r = ExprRewriter::new();
-        let spc = AddressSpace::unique("uniq", 0, None);
+        let spc = AddressSpaceId::unique_id(0);
 
-        let var0 = Var::new0(&spc, 0, 32);
+        let var0 = Var::new0(spc, 0, 32);
 
         let v1 = Expr::int_add(
             Expr::int_add(Expr::var(var0), Expr::val(0x20u32)),
@@ -1002,7 +1002,7 @@ mod test {
             r.simplify_expr(&v2, &*DEFAULT_RULES)
         );
 
-        let t = Expr::concat(Expr::val(10), Expr::var(Var::new0(&spc, 0, 32)));
+        let t = Expr::concat(Expr::val(10), Expr::var(Var::new0(spc, 0, 32)));
         let z = Expr::concat_with::<BE, _, _>(
             Expr::extract(t.clone(), 0, 16),
             Expr::concat_with::<BE, _, _>(
@@ -1017,10 +1017,10 @@ mod test {
         );
 
         let c1 = Expr::bool_or(
-            Expr::int_lt(Expr::var(Var::new0(&spc, 0, 32)), Expr::val(10u32)),
-            Expr::int_eq(Expr::var(Var::new0(&spc, 0, 32)), Expr::val(10u32)),
+            Expr::int_lt(Expr::var(Var::new0(spc, 0, 32)), Expr::val(10u32)),
+            Expr::int_eq(Expr::var(Var::new0(spc, 0, 32)), Expr::val(10u32)),
         );
-        let c2 = Expr::int_le(Expr::var(Var::new0(&spc, 0, 32)), Expr::val(10u32));
+        let c2 = Expr::int_le(Expr::var(Var::new0(spc, 0, 32)), Expr::val(10u32));
 
         assert_eq!(
             r.simplify_expr(&c1, &*DEFAULT_RULES),
@@ -1031,13 +1031,13 @@ mod test {
     #[test]
     fn test_simplify() {
         let mut r = ExprRewriter::new();
-        let spc = AddressSpace::unique("uniq", 0, None);
+        let spc = AddressSpaceId::unique_id(0);
 
         let expr1 = Expr::int_add(
-            Expr::var(Var::new0(&spc, 4, 32)),
+            Expr::var(Var::new0(spc, 4, 32)),
             Expr::int_add(
-                Expr::int_mul(Expr::var(Var::new0(&spc, 4, 32)), Expr::val(1u32)),
-                Expr::var(Var::new0(&spc, 4, 32)),
+                Expr::int_mul(Expr::var(Var::new0(spc, 4, 32)), Expr::val(1u32)),
+                Expr::var(Var::new0(spc, 4, 32)),
             ),
         );
 
@@ -1059,7 +1059,7 @@ mod test {
                 _rule_name: egg::Symbol,
             ) -> Vec<Id> {
                 let a = subst[self.var];
-                let sz = egraph[a].data.nbits() as usize;
+                let sz = egraph[a].data.nbits();
 
                 let two = egraph.add(ExprT::Val(BitVec::from_u32(2, sz), ValHint::CONSTANT));
                 let addtwo = egraph.add(ExprT::BinOp(BinOp::MUL, [two, a]));
@@ -1103,7 +1103,7 @@ mod test {
             ) -> Vec<Id> {
                 let a = subst[self.pa];
                 let b = subst[self.pb];
-                let sz = egraph[a].data.nbits() as usize;
+                let sz = egraph[a].data.nbits();
 
                 let one = egraph.add(ExprT::Val(BitVec::from_u32(1, sz), ValHint::CONSTANT));
                 let pa1 = egraph.add(ExprT::BinOp(BinOp::ADD, [a, one]));
@@ -1130,7 +1130,7 @@ mod test {
         assert_ne!(expr1, expr2);
         assert_eq!(
             expr2,
-            Expr::int_mul(Expr::val(3u32), Expr::var(Var::new0(&spc, 4, 32)))
+            Expr::int_mul(Expr::val(3u32), Expr::var(Var::new0(spc, 4, 32)))
         );
     }
 

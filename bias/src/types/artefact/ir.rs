@@ -302,7 +302,7 @@ impl IRListing {
                 })
                 .map(|(loc, op)| IROperation {
                     location: loc,
-                    value: op.display_with(Some(lifter.translator())).to_string(),
+                    value: op.display_with(Some(lifter.language())).to_string(),
                 })
                 .collect(),
             attributes: AttributeMap::new(),

@@ -2,11 +2,11 @@ use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 
 use ahash::{AHashMap as Map, AHashSet as Set};
-use fugue::ir::{Address, AddressSpaceId};
+use fugue::sleigh::language::spaces::AddressSpaceId;
 use smallvec::SmallVec;
 
 use crate::domains::interval::BitVecInterval;
-use crate::ir::{BinOp, BinRel, BitSize, Expr, Insn, Stmt, Term, Type, UnOp, Var};
+use crate::ir::{Address, BinOp, BinRel, BitSize, Expr, Insn, Stmt, Term, Type, UnOp, Var};
 use crate::kb::block::CodeBlockId;
 use crate::kb::function::{Function, FunctionId};
 use crate::kb::id::Identifiable;

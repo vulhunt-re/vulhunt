@@ -186,14 +186,12 @@ impl FunctionUninitUses {
         let args = IndexSet::<StackVarDef, AHashRandomState>::from_iter(
             (0..max_n).into_iter().map_while(|i| {
                 proto.input(i).and_then(|p| match p {
-                    PrototypeOperand::Register { varnode, .. } => {
-                        Some(StackVarDef::from(Var::new0(
-                            lifter.register_space_id(),
-                            varnode.offset(),
-                            varnode.size() as u32 * 8,
-                        )))
-                    }
-                    PrototypeOperand::StackRelative(offset) => {
+                    PrototypeOperand::Register(varnode) => Some(StackVarDef::from(Var::new0(
+                        lifter.register_space_id(),
+                        varnode.offset(),
+                        varnode.size() as u32 * 8,
+                    ))),
+                    PrototypeOperand::StackRelative { offset, .. } => {
                         Some(StackVarDef::stack(*offset as _, lifter.address_bytes()))
                     }
                     _ => None,

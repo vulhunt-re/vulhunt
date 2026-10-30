@@ -3,12 +3,11 @@ use std::ops::{Neg, Not};
 
 use ahash::{AHashMap as Map, AHashSet as Set};
 use fugue::bv::BitVec;
-use fugue::ir::Address;
 use petgraph::visit::EdgeRef;
 use petgraph::EdgeDirection;
 
 use crate::inject::{InjectionManager, InjectionStub};
-use crate::ir::{BinOp, BinRel, BitSize, Expr, Stmt, Term, ToAddress, Type, UnOp, Var};
+use crate::ir::{Address, BinOp, BinRel, BitSize, Expr, Stmt, Term, ToAddress, Type, UnOp, Var};
 use crate::kb::block::CodeBlockId;
 use crate::kb::function::{Function, FunctionId, FunctionTable};
 use crate::kb::id::Identifiable;
@@ -174,10 +173,10 @@ impl<'a> ConstFoldVisitor<'a> {
             Some(from)
         } else if tsign {
             // signed cast
-            Some(from.signed().cast(tbits as usize))
+            Some(from.signed().cast(tbits))
         } else {
             // unsigned cast
-            Some(from.unsigned().cast(tbits as usize))
+            Some(from.unsigned().cast(tbits))
         }
     }
 
@@ -201,9 +200,7 @@ impl<'a> ConstFoldVisitor<'a> {
                             Some(val.not())
                         }
                     }
-                    UnOp::POPCOUNT(bits) => {
-                        Some(BitVec::from_u32(val.count_ones(), *bits as usize))
-                    }
+                    UnOp::POPCOUNT(bits) => Some(BitVec::from_u32(val.count_ones(), *bits)),
                     _ => None,
                 }
             }
@@ -285,8 +282,8 @@ impl<'a> ConstFoldVisitor<'a> {
                 let tbits = lval.nbits() + rval.nbits();
                 let sbits = rval.nbits();
 
-                let lvex = lval.unsigned().cast(tbits as usize) << sbits;
-                let rvex = rval.unsigned().cast(tbits as usize);
+                let lvex = lval.unsigned().cast(tbits) << sbits;
+                let rvex = rval.unsigned().cast(tbits);
 
                 Some(lvex | rvex)
             }
@@ -297,9 +294,9 @@ impl<'a> ConstFoldVisitor<'a> {
                     Some(val)
                 } else {
                     Some(if *lsb > 0 {
-                        (val >> *lsb).unsigned().cast((msb - lsb) as usize)
+                        (val >> *lsb).unsigned().cast(msb - lsb)
                     } else {
-                        val.unsigned().cast((msb - lsb) as usize)
+                        val.unsigned().cast(msb - lsb)
                     })
                 }
             }
@@ -308,15 +305,15 @@ impl<'a> ConstFoldVisitor<'a> {
                 let vbits = val.nbits();
 
                 if vbits > *bits {
-                    Some((val.unsigned() >> (vbits - bits)).cast(*bits as usize))
+                    Some((val.unsigned() >> (vbits - bits)).cast(*bits))
                 } else {
-                    Some(val.unsigned().cast(*bits as usize))
+                    Some(val.unsigned().cast(*bits))
                 }
             }
             Expr::ExtractLow(expr, bits) => {
                 let val = self.eval_expr(expr)?;
 
-                Some(val.unsigned().cast(*bits as usize))
+                Some(val.unsigned().cast(*bits))
             }
             Expr::Intrinsic(_, _, _) => None,
         }
@@ -337,7 +334,7 @@ impl<'a> ConstFoldVisitor<'a> {
         let sp = project.lifter().stack_pointer();
         let sp_val = config
             .fixed_stack_pointer
-            .map(|addr| BitVec::from_u64(addr.into(), sp.nbits() as usize));
+            .map(|addr| BitVec::from_u64(addr.into(), sp.nbits()));
 
         let mut hits = Map::new();
 

@@ -1,6 +1,6 @@
-use fugue::ir::Address;
 use ustr::Ustr;
 
+use crate::ir::Address;
 use crate::kb::function::{Function, FunctionId};
 use crate::kb::function_summary::{FunctionSummary, FunctionSummaryId};
 use crate::kb::id::Identifiable;

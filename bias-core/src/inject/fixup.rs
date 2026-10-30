@@ -1,15 +1,14 @@
 use std::fmt;
 use std::sync::Arc;
 
-use fugue::ir::disassembly::IRBuilderArena;
-use fugue::sleigh::IRBuilder;
+use fugue::sleigh::semantics::{IRBuilder, IRBuilderError};
 use ouroboros::self_referencing;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::ir::insn::IntraInsnCFG;
-use crate::ir::{Insn, Stmt, Term};
+use crate::ir::{Address, Insn, Stmt, Term};
 use crate::kb::Ustr;
 use crate::lifter::Lifter;
 
@@ -61,7 +60,7 @@ pub struct InjectionFixup {
 #[derive(Debug, Error)]
 pub enum InjectionFixupError {
     #[error(transparent)]
-    Build(#[from] fugue::sleigh::IRBuilderError),
+    Build(#[from] IRBuilderError),
 }
 
 impl InjectionFixup {
@@ -71,28 +70,13 @@ impl InjectionFixup {
         input: impl AsRef<str>,
         shift: i64,
     ) -> Result<Self, InjectionFixupError> {
-        let translator = lifter.translator();
-        let ffs = lifter.float_kinds();
+        let language = lifter.language();
 
-        let manager = translator.manager();
-        let user_ops = translator.user_ops();
+        let pcode = IRBuilder::new(language).translate(&mut language.builder(), input)?;
 
-        let mut builder = IRBuilder::new(translator);
-        let irb = IRBuilderArena::with_capacity(128);
-
-        let pcode = builder.translate(&irb, input)?;
-
-        let address = translator.address(0);
-
-        let operations = pcode
-            .into_iter()
-            .enumerate()
-            .map(|(i, op)| {
-                Stmt::from_parts(
-                    manager, ffs, user_ops, &address, i, op.opcode, op.inputs, op.output,
-                )
-            })
-            .collect::<SmallVec<_>>();
+        let operations =
+            Stmt::from_pcode(language, lifter.float_kinds(), Address::from(0u32), &pcode)
+                .collect::<SmallVec<_>>();
 
         let insn = Insn::from_parts(0u32, operations);
 

@@ -1,4 +1,5 @@
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
+use std::cmp::Ordering;
 use std::fmt;
 
 use fugue::bv::BitVec;
@@ -72,8 +73,8 @@ impl BitVecInterval {
         match iv {
             Self::Bottom(_) => Self::Bottom(bits),
             Self::Interval(lb, ub) => {
-                if ub >= bound {
-                    Self::Interval(lb.max(bound.clone()), ub.max(bound))
+                if bound_cmp(&ub, &bound).is_ge() {
+                    Self::Interval(bound_max(lb, bound.clone()), bound_max(ub, bound))
                 } else {
                     Self::Bottom(bits)
                 }
@@ -108,8 +109,8 @@ impl BitVecInterval {
         match iv {
             Self::Bottom(_) => Self::Bottom(bits),
             Self::Interval(lb, ub) => {
-                if lb <= bound {
-                    Self::Interval(lb.min(bound.clone()), ub.min(bound))
+                if bound_cmp(&lb, &bound).is_le() {
+                    Self::Interval(bound_min(lb, bound.clone()), bound_min(ub, bound))
                 } else {
                     Self::Bottom(bits)
                 }
@@ -133,11 +134,11 @@ impl BitVecInterval {
             if let Self::Interval(lb, ub) = self {
                 let bits = self.nbits();
 
-                let zero = BitVec::zero(bits as usize);
-                let nlb = lb.unsigned_cast(bits as usize).max(zero.clone());
-                let nub = ub.unsigned_cast(bits as usize).max(zero);
+                let zero = BitVec::zero(bits);
+                let nlb = bound_max(lb.unsigned_cast(bits), zero.clone());
+                let nub = bound_max(ub.unsigned_cast(bits), zero);
 
-                if nlb <= nub {
+                if bound_cmp(&nlb, &nub).is_le() {
                     Self::Interval(nlb, nub)
                 } else {
                     Self::Bottom(bits)
@@ -155,12 +156,12 @@ impl BitVecInterval {
             if let Self::Interval(lb, ub) = self {
                 let bits = self.nbits();
 
-                let max_signed = BitVec::max_value_with(bits as usize, true).unsigned();
+                let max_signed = BitVec::max_value_with(bits, true).unsigned();
 
-                let nlb = lb.min(&max_signed).signed_cast(bits as usize);
-                let nub = ub.min(&max_signed).signed_cast(bits as usize);
+                let nlb = bound_min(lb, &max_signed).signed_cast(bits);
+                let nub = bound_min(ub, &max_signed).signed_cast(bits);
 
-                if nlb <= nub {
+                if bound_cmp(&nlb, &nub).is_le() {
                     Self::Interval(nlb, nub)
                 } else {
                     Self::Bottom(bits)
@@ -185,10 +186,10 @@ impl BitVecInterval {
             (Self::Bottom(_), _) | (_, Self::Bottom(_)) => Self::Bottom(bits),
             (Self::Top(_), _) | (_, Self::Top(_)) => Self::Top(bits),
             (Self::Interval(lb1, ub1), Self::Interval(lb2, ub2)) if lsign == rsign => {
-                let nlb = lb1.min(lb2);
-                let nub = ub1.max(ub2);
+                let nlb = bound_min(lb1, lb2);
+                let nub = bound_max(ub1, ub2);
 
-                if nlb <= nub {
+                if bound_cmp(nlb, nub).is_le() {
                     Self::Interval(nlb.clone(), nub.clone())
                 } else {
                     Self::Bottom(bits)
@@ -214,10 +215,10 @@ impl BitVecInterval {
             (Self::Bottom(_), _) | (_, Self::Bottom(_)) => Self::Bottom(bits),
             (Self::Top(_), v) | (v, Self::Top(_)) => v.clone(),
             (Self::Interval(lb1, ub1), Self::Interval(lb2, ub2)) if lsign == rsign => {
-                let nlb = lb1.max(lb2);
-                let nub = ub1.min(ub2);
+                let nlb = bound_max(lb1, lb2);
+                let nub = bound_min(ub1, ub2);
 
-                if nlb <= nub {
+                if bound_cmp(nlb, nub).is_le() {
                     Self::Interval(nlb.clone(), nub.clone())
                 } else {
                     Self::Bottom(bits)
@@ -240,7 +241,7 @@ impl BitVecInterval {
             Self::Top(_) => Self::Bottom(bits),
             Self::Interval(lb1, ub1) => {
                 if *lb1 == lb1.min_value() {
-                    let nlb = ub1 + &BitVec::one(bits as usize);
+                    let nlb = ub1 + &BitVec::one(bits);
                     let nub = ub1.max_value();
 
                     let (nlb, nub) = if sign {
@@ -249,14 +250,14 @@ impl BitVecInterval {
                         (nlb.unsigned(), nub.unsigned())
                     };
 
-                    if nlb <= nub {
+                    if bound_cmp(&nlb, &nub).is_le() {
                         Self::Interval(nlb, nub)
                     } else {
                         Self::Bottom(bits)
                     }
                 } else if *ub1 == ub1.max_value() {
                     let nlb = lb1.min_value();
-                    let nub = lb1 - &BitVec::one(bits as usize);
+                    let nub = lb1 - &BitVec::one(bits);
 
                     let (nlb, nub) = if sign {
                         (nlb.signed(), nub.signed())
@@ -264,7 +265,7 @@ impl BitVecInterval {
                         (nlb.unsigned(), nub.unsigned())
                     };
 
-                    if nlb <= nub {
+                    if bound_cmp(&nlb, &nub).is_le() {
                         Self::Interval(nlb, nub)
                     } else {
                         Self::Bottom(bits)
@@ -301,7 +302,7 @@ impl BitVecInterval {
                     (
                         *var,
                         Self::new(var.nbits())
-                            .with_upper_bound((val - &BitVec::one(var.nbits() as usize)).signed()),
+                            .with_upper_bound((val - &BitVec::one(var.nbits())).signed()),
                     )
                 })
             })
@@ -318,7 +319,7 @@ impl BitVecInterval {
                     (
                         *var,
                         Self::new(var.nbits())
-                            .with_lower_bound((val + &BitVec::one(var.nbits() as usize)).signed()),
+                            .with_lower_bound((val + &BitVec::one(var.nbits())).signed()),
                     )
                 })
             })
@@ -334,8 +335,7 @@ impl BitVecInterval {
                 cond.cond_lt().map(|(var, val)| {
                     (
                         *var,
-                        Self::new(var.nbits())
-                            .with_upper_bound(val - &BitVec::one(var.nbits() as usize)),
+                        Self::new(var.nbits()).with_upper_bound(val - &BitVec::one(var.nbits())),
                     )
                 })
             })
@@ -351,8 +351,7 @@ impl BitVecInterval {
                 cond.cond_gt().map(|(var, val)| {
                     (
                         *var,
-                        Self::new(var.nbits())
-                            .with_lower_bound(val + &BitVec::one(var.nbits() as usize)),
+                        Self::new(var.nbits()).with_lower_bound(val + &BitVec::one(var.nbits())),
                     )
                 })
             })
@@ -364,6 +363,30 @@ impl BitVecInterval {
                     )
                 })
             })
+    }
+}
+
+fn bound_cmp(lhs: &BitVec, rhs: &BitVec) -> Ordering {
+    match (lhs.is_negative(), rhs.is_negative()) {
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        _ => lhs.cmp(rhs),
+    }
+}
+
+fn bound_max<B: Borrow<BitVec>>(lhs: B, rhs: B) -> B {
+    if bound_cmp(lhs.borrow(), rhs.borrow()).is_gt() {
+        lhs
+    } else {
+        rhs
+    }
+}
+
+fn bound_min<B: Borrow<BitVec>>(lhs: B, rhs: B) -> B {
+    if bound_cmp(lhs.borrow(), rhs.borrow()).is_gt() {
+        rhs
+    } else {
+        lhs
     }
 }
 
@@ -382,7 +405,7 @@ impl Iterator for BitVecIntervalIter {
         match &mut self.0 {
             BitVecInterval::Bottom(_) => None,
             BitVecInterval::Top(bits) => {
-                let bits = *bits as usize;
+                let bits = *bits;
                 self.0 = BitVecInterval::Interval(
                     BitVec::one(bits),
                     BitVec::max_value_with(bits, false),
@@ -391,7 +414,7 @@ impl Iterator for BitVecIntervalIter {
             }
             BitVecInterval::Interval(lb, ub) => {
                 let val = Some(lb.clone());
-                if lb >= ub {
+                if bound_cmp(lb, ub).is_ge() {
                     self.0 = BitVecInterval::Bottom(lb.nbits());
                 } else {
                     *lb = &*lb + &BitVec::one(lb.bits());

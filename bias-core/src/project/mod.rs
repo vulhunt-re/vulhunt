@@ -1,8 +1,7 @@
 use std::borrow::Borrow;
 use std::path::Path;
 
-use fugue::ir::compiler::CallFixup;
-use fugue::ir::{Address, Translator};
+use fugue::lifter::runtime::convention::CallFixup;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -12,6 +11,7 @@ use crate::cio::{Error as TypeError, TypeDB};
 use crate::data::DataTypeDB;
 use crate::eval::{Configuration, Error as EvalError, IREvaluator};
 use crate::inject::{InjectionFixup, InjectionFixupError, InjectionManager};
+use crate::ir::Address;
 use crate::kb::block::{CodeBlock, CodeBlockTable};
 use crate::kb::function::{Function, FunctionId, FunctionTable};
 use crate::kb::function_summary::FunctionSummaryTable;
@@ -50,7 +50,7 @@ pub enum ProjectIOError {
     FileIO(#[from] std::io::Error),
 }
 
-#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Clone)]
 pub struct Project {
     id: Uuid,
     pub(crate) icfg: ICFG,
@@ -64,7 +64,6 @@ pub struct Project {
     pub(crate) memory: Memory,
     pub(crate) datadb: DataTypeDB,
     pub(crate) typedb: TypeDB,
-    #[serde(skip)]
     pub(crate) manager: AnalysisManager,
     pub(crate) injections: InjectionManager,
 }
@@ -528,6 +527,12 @@ impl Project {
         let symbols = &self.symtab;
 
         for fixup in lifter.convention().call_fixups() {
+            let Some(body) = fixup.payload().body() else {
+                tracing::warn!("fixup {} has no p-code body; skipping", fixup.name());
+                continue;
+            };
+            let shift = fixup.payload().param_shift();
+
             if let Some(fid) = symbols.lookup_function(fixup.name()) {
                 tracing::trace!(
                     "registering fixup override for {} at {} (fixup)",
@@ -536,7 +541,7 @@ impl Project {
                 );
                 self.injections.add_function_stub(
                     fid,
-                    InjectionFixup::new(lifter, fixup.name(), fixup.pcode(), fixup.shift())?,
+                    InjectionFixup::new(lifter, fixup.name(), body, shift)?,
                 );
             }
 
@@ -553,7 +558,7 @@ impl Project {
 
                 self.injections.add_function_stub(
                     fid,
-                    InjectionFixup::new(lifter, fixup.name(), fixup.pcode(), fixup.shift())?,
+                    InjectionFixup::new(lifter, fixup.name(), body, shift)?,
                 );
             }
         }
@@ -589,11 +594,5 @@ impl Identifiable for Project {
 impl Borrow<Lifter> for Project {
     fn borrow(&self) -> &Lifter {
         self.lifter()
-    }
-}
-
-impl Borrow<Translator> for Project {
-    fn borrow(&self) -> &Translator {
-        self.lifter().translator()
     }
 }

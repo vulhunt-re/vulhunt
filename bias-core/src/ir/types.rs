@@ -6,7 +6,7 @@ use std::sync::Arc;
 use ahash::AHashSet;
 use bitflags::bitflags;
 use fugue::bv::BitVec;
-use fugue::ir::float_format::FloatFormat;
+use fugue::sleigh::language::float_format::FloatFormat;
 use smallvec::SmallVec;
 use ustr::Ustr;
 

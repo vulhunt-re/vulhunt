@@ -2,11 +2,10 @@ use std::ops::Range;
 
 use ahash::AHashSet;
 use fugue::bv::BitVec;
-use fugue::ir::Address;
 
 use crate::eval::observer::{Observer, ObserverError};
 use crate::eval::{Configuration, IRContext};
-use crate::ir::{Expr, Location, Term, Var};
+use crate::ir::{Address, Expr, Location, Term, Var};
 use crate::kb::block::CodeBlock;
 
 pub struct StackLogger {

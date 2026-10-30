@@ -1,6 +1,6 @@
+use fugue::sleigh::language::LanguageError;
 use thiserror::Error;
 
-use crate::fugue;
 use crate::prelude::*;
 
 #[derive(Debug, Error)]
@@ -32,7 +32,7 @@ pub enum DecompilerError {
     #[error("could not add search path: {0}")]
     SearchPath(cxx::Exception),
     #[error("could not add search paths: {0}")]
-    SearchPathDiscover(fugue::ir::error::Error),
+    SearchPathDiscover(LanguageError),
     #[error("invalid argument: {0}; it must be of the form var=regex")]
     RegexArg(String),
     #[error("could not remove type: {0}")]

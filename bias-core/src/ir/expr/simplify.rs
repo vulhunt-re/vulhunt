@@ -226,7 +226,7 @@ impl ExprRewrite for ExprAssocCommReduce {
 #[cfg(test)]
 mod test {
     use fugue::bytes::{BE, LE};
-    use fugue::ir::AddressSpace;
+    use fugue::sleigh::language::spaces::AddressSpaceId;
 
     use super::*;
     use crate::ir::{Expr, Var};
@@ -234,19 +234,19 @@ mod test {
     #[test]
     fn test_simplify() {
         let mut simplifier = ExprRewriter::default();
-        let spc = AddressSpace::unique("uniq", 0, None);
+        let spc = AddressSpaceId::unique_id(0);
 
         let x = simplifier.apply(&Expr::int_add(
             Expr::int_add(
                 Expr::val(10u64),
                 Expr::int_mul(
                     Expr::int_add(Expr::val(99u32), Expr::val(1u32)),
-                    Expr::var(Var::new(&spc, 0, 32, 0)),
+                    Expr::var(Var::new(spc, 0, 32, 0)),
                 ),
             ),
             Expr::int_add(
                 Expr::concat(
-                    Expr::int_mul(Expr::var(Var::new(&spc, 4, 32, 0)), Expr::val(0u32)),
+                    Expr::int_mul(Expr::var(Var::new(spc, 4, 32, 0)), Expr::val(0u32)),
                     Expr::val(44u32),
                 ),
                 Expr::cast_unsigned(Expr::val(32u32), 64),
@@ -265,7 +265,7 @@ mod test {
             x,
             Expr::int_add(
                 Expr::cast_unsigned(
-                    Expr::int_mul(Expr::var(Var::new(&spc, 0, 32, 0)), Expr::val(100u32)),
+                    Expr::int_mul(Expr::var(Var::new(spc, 0, 32, 0)), Expr::val(100u32)),
                     64
                 ),
                 Expr::val(86u64),
@@ -273,7 +273,7 @@ mod test {
         );
         assert_eq!(y, Expr::val(185u32),);
 
-        let t = Expr::int_add(Expr::val(10), Expr::var(Var::new0(&spc, 0, 32)));
+        let t = Expr::int_add(Expr::val(10), Expr::var(Var::new0(spc, 0, 32)));
         let z = Expr::concat_with::<BE, _, _>(
             Expr::extract(t.clone(), 0, 16),
             Expr::concat_with::<BE, _, _>(
@@ -294,7 +294,7 @@ mod test {
 
         assert_eq!(simplifier.apply(&t), simplifier.apply(&z));
 
-        let var0 = Var::new0(&spc, 0, 32);
+        let var0 = Var::new0(spc, 0, 32);
 
         let v1 = Expr::int_add(
             Expr::int_add(Expr::val(0x20u32), Expr::var(var0)),

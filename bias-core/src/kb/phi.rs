@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 use std::fmt;
 
-use fugue::ir::il::traits::{TranslatorDisplay, TranslatorFormatter};
 use smallvec::SmallVec;
 
+use crate::ir::traits::{LanguageDisplay, LanguageFormatter};
 use crate::ir::{Location, Var, Visit, VisitMut, VisitVars, VisitVarsMut};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -93,7 +93,7 @@ impl Phi {
 
 pub struct PhiFormatter<'phi, 'trans> {
     phi: &'phi Phi,
-    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    fmt: Cow<'trans, LanguageFormatter<'trans>>,
 }
 
 impl<'phi, 'trans> fmt::Display for PhiFormatter<'phi, 'trans> {
@@ -115,10 +115,10 @@ impl<'phi, 'trans> fmt::Display for PhiFormatter<'phi, 'trans> {
     }
 }
 
-impl<'phi, 'trans> TranslatorDisplay<'phi, 'trans> for Phi {
+impl<'phi, 'trans> LanguageDisplay<'phi, 'trans> for Phi {
     type Target = PhiFormatter<'phi, 'trans>;
 
-    fn display_full(&'phi self, fmt: Cow<'trans, TranslatorFormatter<'trans>>) -> Self::Target {
+    fn display_full(&'phi self, fmt: Cow<'trans, LanguageFormatter<'trans>>) -> Self::Target {
         PhiFormatter { phi: self, fmt }
     }
 }

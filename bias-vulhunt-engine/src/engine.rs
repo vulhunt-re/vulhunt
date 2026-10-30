@@ -117,7 +117,7 @@ where
                 // same for all checkers with no FLIRT libs defined.
                 let stag = checker
                     .signature_arch_tags()
-                    .get(project.lifter().translator().architecture())
+                    .get(&project.lifter().architecture())
                     .copied()
                     .unwrap_or_default();
 
@@ -174,7 +174,7 @@ where
         let checker = self.checker_for(id)?;
         let tag = checker
             .signature_arch_tags()
-            .get(self.project.lifter().translator().architecture())?;
+            .get(&self.project.lifter().architecture())?;
         self.flirt_symbols_cache.get(tag)
     }
 
@@ -182,7 +182,7 @@ where
         let checker = self.checker_for(id)?;
         let tag = checker
             .signature_arch_tags()
-            .get(self.project.lifter().translator().architecture())
+            .get(&self.project.lifter().architecture())
             .copied()
             .unwrap_or_default();
         let tkey = (checker.types(), tag);

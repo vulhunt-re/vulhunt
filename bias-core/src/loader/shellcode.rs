@@ -26,7 +26,7 @@ impl Shellcode {
     pub fn set_entry(&mut self, entry: impl Into<Address>) {
         let entry = entry.into();
         if entry >= self.base && entry < self.base + self.bytes.len() {
-            self.entry = Some(entry.into());
+            self.entry = Some(entry);
         } else {
             self.entry = None;
         }

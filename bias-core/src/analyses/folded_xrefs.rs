@@ -1,7 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
 use fugue::bv::BitVec;
-use fugue::ir::Address;
 
 use super::dataflow::constants::DATAFLOW_CONSTANT_FOLD;
 use super::dataflow::reaching_constants::ReachingConsts;
@@ -9,7 +8,7 @@ use super::xrefs::XRefDB;
 use crate::any::ProvidesStaticType;
 use crate::eval::observer::{Observer, ObserverError};
 use crate::eval::{Bound, IRContext, IREvalConfig, ObserverContext, ObserverState};
-use crate::ir::{Expr, Location, Term, ToAddress, Var};
+use crate::ir::{Address, Expr, Location, Term, ToAddress, Var};
 use crate::kb::block::CodeBlockId;
 use crate::kb::id::Identifiable;
 use crate::kb::uuid;

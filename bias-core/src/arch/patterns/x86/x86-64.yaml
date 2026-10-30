@@ -1,4 +1,5 @@
-architecture: x86:LE:64:*:*
+constraints:
+  - language: x86:LE:64:*:*
 author: Binarly
 patterns:
   - pattern-group:
