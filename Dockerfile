@@ -4,8 +4,8 @@ USER root
 
 RUN apk update
 RUN apk add rust cmake make build-base \
-    clang-20 llvm-20-dev git gmp-dev \
-    m4 bash curl xz zip
+    clang-20 llvm-20-dev git \
+    bash curl xz zip
 
 WORKDIR /build
 

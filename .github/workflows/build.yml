@@ -82,11 +82,11 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/llvm-19.list
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            clang-19 lld-19 cmake libgmp-dev libmpfr-dev
+            clang-19 lld-19 cmake
 
       - name: Install system deps (macOS)
         if: startsWith(matrix.runner, 'macos')
-        run: brew install -q llvm@19 cmake gmp mpfr
+        run: brew install -q llvm@19 cmake
 
       - name: Install LLVM (Windows)
         if: runner.os == 'Windows'
