@@ -1,6 +1,5 @@
-use std::io::{self, Read};
-
 use ahash::AHashSet;
+use fugue::specs::Cursor;
 use sha2::{Digest, Sha256};
 use ustr::Ustr;
 
@@ -11,6 +10,7 @@ use crate::kb::uuid;
 use crate::project::analysis::{
     Analysis, AnalysisInfo, AnalysisSchedule, Error as AnalysisError, Schedule,
 };
+use crate::region::SegmentCursor;
 use crate::Project;
 
 #[derive(Default, Clone, serde::Deserialize, serde::Serialize)]
@@ -75,15 +75,11 @@ impl Analysis for ModuleSignature {
                 continue;
             };
 
-            let mut position = 0;
-            for chunk in view.chunks() {
-                io::copy(&mut io::repeat(0).take(chunk.offset() - position), &mut hasher)
-                    .expect("hashing does not fail");
-                hasher.update(chunk.bytes());
-                position = chunk.offset() + chunk.bytes().len() as u64;
+            let mut cursor = SegmentCursor::new(&view);
+            hasher.update(cursor.chunk());
+            while cursor.advance() {
+                hasher.update(cursor.chunk());
             }
-            io::copy(&mut io::repeat(0).take(view.size() - position), &mut hasher)
-                .expect("hashing does not fail");
         }
 
         self.digest.copy_from_slice(&hasher.finalize()[..]);

@@ -299,12 +299,13 @@ impl DisassemblyListing {
                 .map(|insn| Instruction {
                     address: insn.address,
                     value: {
-                        let view = reader.bytes_at(insn.address(), MAX_INSN_BYTES).unwrap();
+                        let mut bytes = [0u8; MAX_INSN_BYTES];
+                        let read = reader.read_bytes(insn.address(), &mut bytes).unwrap();
                         let insnt = Insn::disassemble(
                             project.lifter(),
                             context,
                             insn.address(),
-                            view.as_contiguous().unwrap_or_default(),
+                            &bytes[..read],
                         )
                         .unwrap();
 

@@ -1,9 +1,12 @@
+use fugue::core::storage::SegmentView;
+use fugue::lifter::runtime::input::MAX_INSN_BYTES;
 use fugue::lifter::runtime::language::Language;
 
-use super::{register_var, Arch, ErasedArch, FunctionThunkTemplate};
+use super::{Arch, ErasedArch, FunctionThunkTemplate};
 use crate::arch::AddressRangeSet;
 use crate::ir::{Address, Expr, Term, Var};
 use crate::kb::{uuid, Uuid};
+use crate::region::{MemoryReader, Region};
 
 #[derive(Copy, Clone, Default)]
 pub struct AARCH64;
@@ -30,49 +33,62 @@ impl Arch for AARCH64 {
     fn gprs(&self, language: &'static Language) -> Vec<Var> {
         || -> Option<Vec<Var>> {
             Some(vec![
-                register_var(language, "x0")?,
-                register_var(language, "x1")?,
-                register_var(language, "x2")?,
-                register_var(language, "x3")?,
-                register_var(language, "x4")?,
-                register_var(language, "x5")?,
-                register_var(language, "x6")?,
-                register_var(language, "x7")?,
-                register_var(language, "x8")?,
-                register_var(language, "x9")?,
-                register_var(language, "x10")?,
-                register_var(language, "x11")?,
-                register_var(language, "x12")?,
-                register_var(language, "x13")?,
-                register_var(language, "x14")?,
-                register_var(language, "x15")?,
-                register_var(language, "x16")?,
-                register_var(language, "x17")?,
-                register_var(language, "x18")?,
-                register_var(language, "x19")?,
-                register_var(language, "x20")?,
-                register_var(language, "x21")?,
-                register_var(language, "x22")?,
-                register_var(language, "x23")?,
-                register_var(language, "x24")?,
-                register_var(language, "x25")?,
-                register_var(language, "x26")?,
-                register_var(language, "x27")?,
-                register_var(language, "x28")?,
-                register_var(language, "x29")?,
-                register_var(language, "x30")?,
+                Var::from_varnode(language, &language.register_by_name("x0")?),
+                Var::from_varnode(language, &language.register_by_name("x1")?),
+                Var::from_varnode(language, &language.register_by_name("x2")?),
+                Var::from_varnode(language, &language.register_by_name("x3")?),
+                Var::from_varnode(language, &language.register_by_name("x4")?),
+                Var::from_varnode(language, &language.register_by_name("x5")?),
+                Var::from_varnode(language, &language.register_by_name("x6")?),
+                Var::from_varnode(language, &language.register_by_name("x7")?),
+                Var::from_varnode(language, &language.register_by_name("x8")?),
+                Var::from_varnode(language, &language.register_by_name("x9")?),
+                Var::from_varnode(language, &language.register_by_name("x10")?),
+                Var::from_varnode(language, &language.register_by_name("x11")?),
+                Var::from_varnode(language, &language.register_by_name("x12")?),
+                Var::from_varnode(language, &language.register_by_name("x13")?),
+                Var::from_varnode(language, &language.register_by_name("x14")?),
+                Var::from_varnode(language, &language.register_by_name("x15")?),
+                Var::from_varnode(language, &language.register_by_name("x16")?),
+                Var::from_varnode(language, &language.register_by_name("x17")?),
+                Var::from_varnode(language, &language.register_by_name("x18")?),
+                Var::from_varnode(language, &language.register_by_name("x19")?),
+                Var::from_varnode(language, &language.register_by_name("x20")?),
+                Var::from_varnode(language, &language.register_by_name("x21")?),
+                Var::from_varnode(language, &language.register_by_name("x22")?),
+                Var::from_varnode(language, &language.register_by_name("x23")?),
+                Var::from_varnode(language, &language.register_by_name("x24")?),
+                Var::from_varnode(language, &language.register_by_name("x25")?),
+                Var::from_varnode(language, &language.register_by_name("x26")?),
+                Var::from_varnode(language, &language.register_by_name("x27")?),
+                Var::from_varnode(language, &language.register_by_name("x28")?),
+                Var::from_varnode(language, &language.register_by_name("x29")?),
+                Var::from_varnode(language, &language.register_by_name("x30")?),
             ])
         }()
         .unwrap_or_default()
     }
 
-    fn invalid_or_nonsense_ranges(&self, start: Address, bytes: &[u8]) -> AddressRangeSet {
+    fn invalid_or_nonsense_ranges(
+        &self,
+        start: Address,
+        segment: &Region,
+        reader: &mut MemoryReader<'_>,
+    ) -> AddressRangeSet {
         use yaxpeax_arch::*;
         use yaxpeax_arm::armv8::a64::{DecodeError, InstDecoder, Opcode, Operand};
 
+        let size = segment.len();
+        let view = reader.bytes_at(*segment.address(), size);
+        let run = view
+            .as_ref()
+            .and_then(SegmentView::as_contiguous)
+            .unwrap_or_default();
+        let mut insn_bytes = [0u8; MAX_INSN_BYTES];
+
         let mut address = start;
         let mut offset = 0usize;
-        let mut invalid_or_nonsense = AddressRangeSet::new_with(address, bytes.len());
+        let mut invalid_or_nonsense = AddressRangeSet::new_with(address, size);
 
         let decoder = InstDecoder::default();
 
@@ -81,8 +97,18 @@ impl Arch for AARCH64 {
             decoder.decode(&mut reader)
         };
 
-        while offset < bytes.len() {
-            match try_decode_slice(&bytes[offset..]) {
+        while offset < size {
+            let bytes = match run.get(offset..) {
+                Some(bytes) if bytes.len() >= MAX_INSN_BYTES => bytes,
+                _ => {
+                    let read = reader
+                        .read_bytes(*segment.address() + offset, &mut insn_bytes)
+                        .unwrap_or(0);
+                    &insn_bytes[..read]
+                }
+            };
+
+            match try_decode_slice(bytes) {
                 Ok(insn) => {
                     match insn.opcode {
                         Opcode::UDF => {

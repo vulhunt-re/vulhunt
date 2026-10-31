@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::collections::hash_map::Entry;
 use std::fmt;
 
 use ahash::AHashMap as Map;
@@ -262,17 +261,6 @@ impl Stmt {
             .map(move |(index, _)| {
                 Self::from_pcode_op(language, float_formats, address, operations, index)
             })
-    }
-
-    pub(crate) fn interned(stmt: Term<Self>, cache: &mut StmtCache) -> Term<Self> {
-        match cache.entry(stmt) {
-            Entry::Vacant(v) => {
-                let k = v.key().to_owned();
-                v.insert(());
-                k
-            }
-            Entry::Occupied(v) => v.key().to_owned(),
-        }
     }
 
     fn from_pcode_op(

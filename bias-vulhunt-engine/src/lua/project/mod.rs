@@ -9,6 +9,7 @@ use bias_core::analyses::blocks::CodeBlockBounds;
 use bias_core::analyses::strings::StringsXRefDB;
 use bias_core::fugue::lifter::runtime::pcode::Varnode;
 use bias_core::prelude::*;
+use bias_core::region::SegmentCursor;
 
 use bias_core::decompiler::types::{
     DecompilerResolverAdaptor, DecompilerTypeResolver, DefaultDecompilerTypeResolver,
@@ -1049,18 +1050,14 @@ where
                 let mut index = 1usize;
                 let mut reader = this.project().memory().reader();
                 for (_, region) in this.project().memory().regions().iter(..) {
-                    let Some(view) = reader.bytes_from(*region.address()) else {
+                    let Some(view) = reader.bytes_at(*region.address(), region.len()) else {
                         continue;
                     };
-                    for chunk in view.chunks() {
-                        let base = *region.address() + chunk.offset();
-                        let mut offset = 0usize;
-                        while let Some(found) = matcher.position_from(chunk.bytes(), offset) {
-                            let addr = base + found;
-                            table.raw_set(index, lua.create_ser_userdata(AddressValue::from(addr))?)?;
-                            index += 1;
-                            offset = found + 1;
-                        }
+                    let base = *region.address();
+                    for found in matcher.positions_cursor(SegmentCursor::new(&view)) {
+                        let addr = base + found;
+                        table.raw_set(index, lua.create_ser_userdata(AddressValue::from(addr))?)?;
+                        index += 1;
                     }
                 }
 
@@ -1096,18 +1093,14 @@ where
                 let mut index = 1usize;
                 let mut reader = this.project().memory().reader();
                 for (_, region) in this.project().memory().regions().iter(..) {
-                    let Some(view) = reader.bytes_from(*region.address()) else {
+                    let Some(view) = reader.bytes_at(*region.address(), region.len()) else {
                         continue;
                     };
-                    for chunk in view.chunks() {
-                        let base = *region.address() + chunk.offset();
-                        let mut offset = 0usize;
-                        while let Some(found) = matcher.position_from(chunk.bytes(), offset) {
-                            let addr = base + found;
-                            table.raw_set(index, lua.create_ser_userdata(AddressValue::from(addr))?)?;
-                            index += 1;
-                            offset = found + 1;
-                        }
+                    let base = *region.address();
+                    for found in matcher.positions_cursor(SegmentCursor::new(&view)) {
+                        let addr = base + found;
+                        table.raw_set(index, lua.create_ser_userdata(AddressValue::from(addr))?)?;
+                        index += 1;
                     }
                 }
 

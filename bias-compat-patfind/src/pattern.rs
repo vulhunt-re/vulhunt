@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::fmt::{Display, Write};
+use std::ops::Range;
 use std::str::FromStr;
 
 use nom::branch::alt;
@@ -12,6 +13,9 @@ use nom::{Err, Finish, IResult};
 
 use regex::bytes::RegexBuilder;
 pub use regex::bytes::{Match, Regex};
+use regex_cursor::engines::meta::Regex as CursorRegex;
+use regex_cursor::regex_automata::util::syntax::Config as SyntaxConfig;
+use regex_cursor::{Cursor, Input};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
@@ -28,6 +32,7 @@ pub struct Pattern {
     data: Vec<u8>,
     mask: Vec<u8>,
     norm: Regex,
+    cursor_norm: CursorRegex,
     bits: u32,
 }
 
@@ -190,6 +195,17 @@ impl Pattern {
             .build()
             .map_err(|_| Err::Error(Error::new(input, ErrorKind::MapRes)))?;
 
+        let cursor_norm = CursorRegex::builder()
+            .configure(CursorRegex::config().utf8_empty(false))
+            .syntax(
+                SyntaxConfig::new()
+                    .unicode(false)
+                    .utf8(false)
+                    .dot_matches_new_line(true),
+            )
+            .build(regex.as_ref())
+            .map_err(|_| Err::Error(Error::new(input, ErrorKind::MapRes)))?;
+
         let bits = mask.iter().map(|b| b.count_ones()).sum::<u32>();
 
         Ok((
@@ -198,6 +214,7 @@ impl Pattern {
                 data,
                 mask,
                 norm,
+                cursor_norm,
                 bits,
             },
         ))
@@ -212,6 +229,27 @@ impl Pattern {
                 .iter()
                 .zip(bytes.iter().zip(self.mask.iter()))
                 .all(|(v, (b, m))| *v == b & m)
+    }
+
+    fn is_match_cursor_at<C: Cursor>(&self, cursor: &mut C, offset: usize) -> bool {
+        while cursor.offset() > offset && cursor.backtrack() {}
+        self.data
+            .iter()
+            .zip(self.mask.iter())
+            .enumerate()
+            .all(|(index, (v, m))| {
+                let position = offset + index;
+                while cursor.offset() + cursor.chunk().len() <= position {
+                    if !cursor.advance() {
+                        return false;
+                    }
+                }
+                *v == cursor.chunk()[position - cursor.offset()] & m
+            })
+    }
+
+    pub(crate) fn matches_end_cursor<C: Cursor>(&self, cursor: &mut C, end: usize) -> bool {
+        end >= self.data.len() && self.is_match_cursor_at(cursor, end - self.data.len())
     }
 
     pub fn is_match(&self, bytes: impl AsRef<[u8]>) -> bool {
@@ -239,6 +277,17 @@ impl Pattern {
         self.normalised_matcher()
             .find_iter(bytes)
             .filter(|m| self.is_match(m.as_bytes()))
+    }
+
+    pub fn find_iter_cursor<'a, C: Cursor + Clone + 'a>(
+        &'a self,
+        cursor: C,
+    ) -> impl Iterator<Item = Range<usize>> + 'a {
+        let mut verifier = cursor.clone();
+        self.cursor_norm
+            .find_iter(Input::new(cursor))
+            .filter(move |m| self.is_match_cursor_at(&mut verifier, m.start()))
+            .map(|m| m.range())
     }
 
     pub fn bits(&self) -> u32 {

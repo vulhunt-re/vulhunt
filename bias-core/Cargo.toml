@@ -42,7 +42,7 @@ encode_unicode = "1"
 fixedbitset = { version = "0.4", features = ["serde"] }
 flate2 = { version = "1", features = ["zlib-rs"], default-features = false }
 fst = "0.4"
-fugue = { git = "https://github.com/fugue-re/fugue-core-next.git", rev = "c708549a2f0f3de67cd944cf81628088197c07cc", default-features = false, features = ["core"] }
+fugue = { git = "https://github.com/fugue-re/fugue-core-next.git", rev = "4f79ef0952fb702fa708f1bacb539e5a3ec0405f", default-features = false, features = ["core"] }
 gazebo = "0.8"
 gimli = "0.28"
 goblin = { version = "0.4", package = "bias-goblin" }

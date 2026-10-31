@@ -46,7 +46,7 @@ use crate::lifter::{Lifter, LifterError};
 use crate::loader::LoadedBinary;
 use crate::project::analysis::AnalysisManager;
 use crate::project::ProjectContext;
-use crate::region::{Memory, MemoryReader, Region};
+use crate::region::{Memory, MemoryReader, Region, SegmentCursor};
 use crate::symbols::SymbolTable;
 use crate::Project;
 
@@ -840,27 +840,24 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
                 wl.push_back(entry);
             }
 
-            let segment_view = reader.bytes_from(*segment.address());
-            let segment_bytes = segment_view
-                .as_ref()
-                .and_then(SegmentView::as_contiguous)
-                .unwrap_or_default();
-
             let avoids = if self.config.avoid_invalid_or_nonsense_ranges {
                 self.context
                     .lifter
                     .arch()
-                    .invalid_or_nonsense_ranges(start, segment_bytes)
+                    .invalid_or_nonsense_ranges(start, segment, &mut reader)
             } else {
                 Default::default()
             };
 
             if self.config.use_function_start_patterns {
+                let segment_view = reader
+                    .bytes_at(*segment.address(), segment.len())
+                    .unwrap_or_default();
                 self.context.lifter.arch().for_each_function_by_pattern(
                     &self.context.lifter,
                     ctx,
                     *segment.address(),
-                    segment_bytes,
+                    SegmentCursor::new(&segment_view),
                     &mut |addr| {
                         wl.push_back(addr);
                         func_starts_by_pattern.insert(addr);
@@ -1039,7 +1036,8 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
 
                             if let Ok(p) = reader.read_pointer(xref.target(), bits) {
                                 if self.context.memory.contains(p) {
-                                    let dt = data.identify_data_via(self.context.memory, &mut reader, p);
+                                    let dt =
+                                        data.identify_data_via(self.context.memory, &mut reader, p);
                                     let prov = PointerProvenance::from(dt);
 
                                     *xref_properties.entry(xref.target()).or_insert(prov) |= prov;
@@ -1065,8 +1063,11 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
                                 }
 
                                 if let Some(tinfo) = self.context.itable.insn(p) {
-                                    let dt =
-                                        data.identify_data_via(self.context.memory, &mut reader, position);
+                                    let dt = data.identify_data_via(
+                                        self.context.memory,
+                                        &mut reader,
+                                        position,
+                                    );
                                     if let Some(d) = dt.as_ref() {
                                         tracing::trace!("potential indirect code pointer via {} at {position} (data: {d})", tinfo.address());
                                     }

@@ -1,7 +1,10 @@
 use std::borrow::Borrow;
 use std::fmt::Display;
+use std::iter;
 use std::str::FromStr;
 
+use bias_core::fugue::specs::Cursor;
+use bias_core::region::SegmentCursor;
 use bias_core::Project;
 use memchr::memmem;
 use serde::{Deserialize, Deserializer, Serializer};
@@ -227,6 +230,64 @@ impl BMatcher {
         self.position_from(bytes, 0)
     }
 
+    pub fn positions_cursor<'a, C: Cursor + Clone + 'a>(
+        &'a self,
+        mut cursor: C,
+    ) -> impl Iterator<Item = usize> + 'a {
+        let total = cursor.total_bytes().unwrap_or_default();
+        let mut verifier = cursor.clone();
+        let mut offset = 0;
+
+        iter::from_fn(move || {
+            while offset < total {
+                let start = cursor.offset();
+                let chunk = cursor.chunk();
+                let end = start + chunk.len();
+
+                if offset < end {
+                    let from = offset.max(start);
+                    let found = self
+                        .position_from(chunk, from - start)
+                        .map(|found| start + found)
+                        .or_else(|| {
+                            (from.max((end + 1).saturating_sub(self.len()))..end)
+                                .take_while(|position| position + self.len() <= total)
+                                .find(|&position| self.matches_cursor_at(&mut verifier, position))
+                        });
+
+                    if let Some(found) = found {
+                        offset = found + 1;
+                        return Some(found);
+                    }
+
+                    offset = end;
+                }
+
+                if !cursor.advance() {
+                    break;
+                }
+            }
+            None
+        })
+    }
+
+    fn matches_cursor_at<C: Cursor>(&self, cursor: &mut C, offset: usize) -> bool {
+        while cursor.offset() > offset && cursor.backtrack() {}
+        (0..self.len()).all(|index| {
+            let position = offset + index;
+            while cursor.offset() + cursor.chunk().len() <= position {
+                if !cursor.advance() {
+                    return false;
+                }
+            }
+            let byte = cursor.chunk()[position - cursor.offset()];
+            match self {
+                Self::Fixed(vs) => vs[index] == byte,
+                Self::Fuzzy(vs) => vs[index].matches(byte),
+            }
+        })
+    }
+
     #[inline(always)]
     pub fn matches_from(&self, bytes: &[u8], offset: usize) -> bool {
         self.position_from(bytes, offset).is_some()
@@ -318,30 +379,26 @@ impl MatchesRule for BMatcher {
                 r.bounds().start,
                 r.bounds().end
             );
-            let Some(view) = reader.bytes_from(*r.address()) else {
+            let Some(view) = reader.bytes_at(*r.address(), r.len()) else {
                 return false;
             };
-            if let Some(found) = view.chunks().iter().find_map(|chunk| {
-                self.position(chunk.bytes())
-                    .map(|found| chunk.offset() as usize + found)
-            }) {
-                let position = *r.address() + found;
+            let Some(found) = self.positions_cursor(SegmentCursor::new(&view)).next() else {
+                return false;
+            };
+            let position = *r.address() + found;
 
-                tracing::trace!("found {self} at {}", position);
+            tracing::trace!("found {self} at {}", position);
 
-                context.describe(FwHuntCheckMatch::Pattern {
-                    value: self.to_string(),
-                    length: self.len(),
-                    location: FwHuntCheckLocation::Address {
-                        value: position.offset(),
-                    },
-                });
-                context.push_provenance(position);
+            context.describe(FwHuntCheckMatch::Pattern {
+                value: self.to_string(),
+                length: self.len(),
+                location: FwHuntCheckLocation::Address {
+                    value: position.offset(),
+                },
+            });
+            context.push_provenance(position);
 
-                true
-            } else {
-                false
-            }
+            true
         })
     }
 

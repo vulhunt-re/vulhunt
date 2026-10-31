@@ -19,9 +19,10 @@ license = "MIT OR Apache-2.0"
 readme = "../README.BIAS.md"
 
 [dependencies]
-fugue-bytes = { git = "https://github.com/fugue-re/fugue-core-next.git", rev = "c708549a2f0f3de67cd944cf81628088197c07cc" }
+fugue-bytes = { git = "https://github.com/fugue-re/fugue-core-next.git", rev = "4f79ef0952fb702fa708f1bacb539e5a3ec0405f" }
 nom = "7"
 regex = "1"
+regex-cursor = { version = "0.1", default-features = false, features = ["perf-inline"] }
 serde = "1"
 serde_yaml = { version = "2.0", package = "serde-saphyr" }
 thiserror = "1"

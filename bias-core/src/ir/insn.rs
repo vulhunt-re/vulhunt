@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
+use std::collections::hash_map::Entry;
 use std::fmt::{self, Write};
 use std::iter::{once, repeat};
 use std::mem::take;
@@ -548,18 +549,6 @@ impl InsnTextFormatter {
                 .map(InsnToken::Symbol),
         );
     }
-
-    fn into_text(self, address: Address, delay_slots: usize, length: usize) -> InsnText {
-        InsnText {
-            address,
-            mnemonic: Ustr::from(&self.mnemonic),
-            operands: self.operands,
-            operand_data: self.operand_data,
-            tokens: self.tokens,
-            delay_slots: delay_slots as u8,
-            length: length as u8,
-        }
-    }
 }
 
 impl InstructionFormatter for InsnTextFormatter {
@@ -699,7 +688,15 @@ impl Insn {
             Err(_) => return Err(LifterError::Format(address)),
         };
 
-        Ok(formatter.into_text(address, context.delay_slot_length(), length))
+        Ok(InsnText {
+            address,
+            mnemonic: Ustr::from(&formatter.mnemonic),
+            operands: formatter.operands,
+            operand_data: formatter.operand_data,
+            tokens: formatter.tokens,
+            delay_slots: context.delay_slot_length() as u8,
+            length: length as u8,
+        })
     }
 
     pub fn lift(
@@ -709,9 +706,26 @@ impl Insn {
         address: impl Into<Address>,
         bytes: &[u8],
     ) -> Result<Term<Self>, LifterError> {
-        Self::lift_aux(lifter, context, operations, address.into(), bytes, |stmt| {
-            stmt
-        })
+        let address = address.into();
+        let language = lifter.language();
+
+        let Some(length) = language.lift(address.offset(), bytes, context, operations) else {
+            return Err(LifterError::Lift(address));
+        };
+
+        let statements = if operations.is_empty() {
+            smallvec![Stmt::skip()]
+        } else {
+            Stmt::from_pcode(language, lifter.float_kinds(), address, operations).collect()
+        };
+
+        Ok(Insn {
+            address,
+            operations: statements,
+            delay_slots: context.delay_slot_length() as u8,
+            length: length as u8,
+        }
+        .into())
     }
 
     pub fn lift_with(
@@ -730,22 +744,6 @@ impl Insn {
             return Err(LifterError::IncorrectAlignment { address, alignment });
         }
 
-        Self::lift_aux(lifter, context, operations, address, bytes, |stmt| {
-            Stmt::interned(stmt, cache)
-        })
-    }
-
-    fn lift_aux<F>(
-        lifter: &Lifter,
-        context: &mut LiftingContext,
-        operations: &mut Vec<PCodeOp>,
-        address: Address,
-        bytes: &[u8],
-        intern: F,
-    ) -> Result<Term<Self>, LifterError>
-    where
-        F: FnMut(Term<Stmt>) -> Term<Stmt>,
-    {
         let language = lifter.language();
 
         let Some(length) = language.lift(address.offset(), bytes, context, operations) else {
@@ -756,7 +754,14 @@ impl Insn {
             smallvec![Stmt::skip()]
         } else {
             Stmt::from_pcode(language, lifter.float_kinds(), address, operations)
-                .map(intern)
+                .map(|stmt| match cache.entry(stmt) {
+                    Entry::Vacant(v) => {
+                        let k = v.key().to_owned();
+                        v.insert(());
+                        k
+                    }
+                    Entry::Occupied(v) => v.key().to_owned(),
+                })
                 .collect()
         };
 

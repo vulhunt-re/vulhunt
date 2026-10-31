@@ -1,4 +1,3 @@
-use fugue::core::storage::SegmentView;
 use fugue::specs::common::{GroupOrValueVisitor, LanguageSpec, PlatformConstraint};
 use fugue::specs::{FunctionProperties, FunctionSpec};
 use ustr::{Ustr, UstrSet};
@@ -7,6 +6,7 @@ use super::icfg::Configuration;
 use crate::kb::id::Identifiable;
 use crate::kb::symbol::SymbolRef;
 use crate::lifter::Lifter;
+use crate::region::SegmentCursor;
 use crate::symbols::{Symbolise, SymboliseError};
 use crate::Project;
 
@@ -84,9 +84,11 @@ impl<'a> FunctionSpecManager<'a> {
         }
     }
 
-    pub fn matches_bytes(&self, bytes: &[u8]) -> Option<&FunctionSpec> {
+    pub fn matches_bytes(&self, bytes: SegmentCursor<'_, '_>) -> Option<&FunctionSpec> {
         self.specs.iter().find_map(|f| {
-            if f.patterns().matches(&self.selector.arch, bytes) {
+            if f.patterns()
+                .matches_cursor(&self.selector.arch, bytes.clone())
+            {
                 Some(*f)
             } else {
                 None
@@ -118,16 +120,14 @@ impl Symbolise for FunctionSpecManager<'_> {
         let mut reader = target.memory.reader();
         for f in target.ftable.values_mut().filter(|f| f.name().is_none()) {
             let addr = f.address();
-            let bytes = f.bytes(&target.cbtable, &mut reader);
 
             tracing::trace!("attempting to apply symbol to function at {addr}");
 
-            let Some(spec) = self.matches_bytes(
-                bytes
-                    .as_ref()
-                    .and_then(SegmentView::as_contiguous)
-                    .unwrap_or_default(),
-            ) else {
+            let Some(bytes) = f.bytes(&target.cbtable, &mut reader) else {
+                continue;
+            };
+
+            let Some(spec) = self.matches_bytes(SegmentCursor::new(&bytes)) else {
                 continue;
             };
 

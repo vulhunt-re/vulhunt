@@ -5,7 +5,6 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, Once};
 use std::time::Duration;
 
-use fugue::lifter::runtime::pcode::Varnode;
 use fugue::sleigh::language::LanguageDB;
 use replace_with::replace_with_or_abort_and_return;
 
@@ -58,15 +57,6 @@ fn ensure_init() {
         DECOMPILER_INIT
             .call_once(|| ffi::ghidra_decompiler_init().expect("decompiler initialisation"))
     }
-}
-
-fn is_register(lifter: &Lifter, offset: u64, size: u32) -> bool {
-    let Ok(size) = u16::try_from(size) else {
-        return false;
-    };
-    let language = lifter.language();
-    let varnode = Varnode::new(language.register_space(), offset, size);
-    language.register_name(&varnode).is_some() || language.containing_register(&varnode).is_some()
 }
 
 pub fn add_search_paths(root: impl AsRef<Path>) -> Result<(), DecompilerError> {

@@ -1,6 +1,6 @@
 use fugue::lifter::runtime::language::Language;
 
-use super::{register_var, Arch, ErasedArch, FunctionThunkTemplate};
+use super::{Arch, ErasedArch, FunctionThunkTemplate};
 use crate::ir::Var;
 use crate::kb::{uuid, Uuid};
 
@@ -17,22 +17,22 @@ impl Arch for XTENSA {
     fn gprs(&self, language: &'static Language) -> Vec<Var> {
         || -> Option<Vec<Var>> {
             Some(vec![
-                register_var(language, "a0")?,
-                register_var(language, "a1")?,
-                register_var(language, "a2")?,
-                register_var(language, "a3")?,
-                register_var(language, "a4")?,
-                register_var(language, "a5")?,
-                register_var(language, "a6")?,
-                register_var(language, "a7")?,
-                register_var(language, "a8")?,
-                register_var(language, "a9")?,
-                register_var(language, "a10")?,
-                register_var(language, "a11")?,
-                register_var(language, "a12")?,
-                register_var(language, "a13")?,
-                register_var(language, "a14")?,
-                register_var(language, "a15")?,
+                Var::from_varnode(language, &language.register_by_name("a0")?),
+                Var::from_varnode(language, &language.register_by_name("a1")?),
+                Var::from_varnode(language, &language.register_by_name("a2")?),
+                Var::from_varnode(language, &language.register_by_name("a3")?),
+                Var::from_varnode(language, &language.register_by_name("a4")?),
+                Var::from_varnode(language, &language.register_by_name("a5")?),
+                Var::from_varnode(language, &language.register_by_name("a6")?),
+                Var::from_varnode(language, &language.register_by_name("a7")?),
+                Var::from_varnode(language, &language.register_by_name("a8")?),
+                Var::from_varnode(language, &language.register_by_name("a9")?),
+                Var::from_varnode(language, &language.register_by_name("a10")?),
+                Var::from_varnode(language, &language.register_by_name("a11")?),
+                Var::from_varnode(language, &language.register_by_name("a12")?),
+                Var::from_varnode(language, &language.register_by_name("a13")?),
+                Var::from_varnode(language, &language.register_by_name("a14")?),
+                Var::from_varnode(language, &language.register_by_name("a15")?),
             ])
         }()
         .unwrap_or_default()

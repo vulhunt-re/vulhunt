@@ -12,6 +12,7 @@ use fugue::core::storage::{
     MemoryMappedSegmentStorage, SegmentMappingBuilder, SegmentMappingCache, SegmentProperties,
     SegmentStorage, SegmentStorageError, SegmentView, DEFAULT_SPACE_ID, TRANSIENT,
 };
+use fugue::specs::Cursor;
 use iset::IntervalMap;
 use itertools::{Itertools, Position};
 use tempfile::TempDir;
@@ -362,19 +363,7 @@ impl<'a> MemoryReader<'a> {
     pub fn bytes_at(&mut self, address: Address, size: usize) -> Option<SegmentView<'a>> {
         let view = self.cache.view_containing(self.segments, address.into())?;
         let remaining = view.range().remaining_from(address.into())?;
-        let size = size.min(usize::try_from(remaining).ok()?);
-        let bytes = view.bytes_at(address, size)?;
-
-        if bytes
-            .as_contiguous()
-            .is_some_and(|bytes| bytes.len() == size)
-        {
-            return Some(bytes);
-        }
-
-        let mut buffer = vec![0u8; size];
-        bytes.read_into(&mut buffer);
-        Some(SegmentView::contiguous(buffer))
+        view.bytes_at(address, size.min(usize::try_from(remaining).ok()?))
     }
 
     pub fn read_bytes(
@@ -426,6 +415,95 @@ impl<'a> MemoryReader<'a> {
         } else {
             T::read_bytes::<BE>(buffer)
         })
+    }
+}
+
+static FILL: [u8; 4096] = [0; 4096];
+
+#[derive(Clone)]
+pub struct SegmentCursor<'v, 'a> {
+    view: &'v SegmentView<'a>,
+    chunk: &'v [u8],
+    offset: usize,
+}
+
+impl<'v, 'a> SegmentCursor<'v, 'a> {
+    pub fn new(view: &'v SegmentView<'a>) -> Self {
+        let mut cursor = Self {
+            view,
+            chunk: &[],
+            offset: 0,
+        };
+        cursor.chunk = cursor.chunk_from(0);
+        cursor
+    }
+
+    fn chunk_from(&self, position: usize) -> &'v [u8] {
+        let mut end = self.view.size() as usize;
+        for chunk in self.view.chunks() {
+            let start = chunk.offset() as usize;
+            let bytes = chunk.bytes();
+            if start <= position && position < start + bytes.len() {
+                return &bytes[position - start..];
+            }
+            if start > position {
+                end = end.min(start);
+            }
+        }
+        &FILL[..(end - position).min(FILL.len())]
+    }
+
+    fn chunk_before(&self, position: usize) -> (usize, &'v [u8]) {
+        let mut gap = 0;
+        for chunk in self.view.chunks() {
+            let start = chunk.offset() as usize;
+            let bytes = chunk.bytes();
+            let end = start + bytes.len();
+            if start < position && position <= end {
+                return (start, &bytes[..position - start]);
+            }
+            if end < position {
+                gap = gap.max(end);
+            }
+        }
+        let start = gap + (position - 1 - gap) / FILL.len() * FILL.len();
+        (start, &FILL[..position - start])
+    }
+}
+
+impl Cursor for SegmentCursor<'_, '_> {
+    fn chunk(&self) -> &[u8] {
+        self.chunk
+    }
+
+    fn utf8_aware(&self) -> bool {
+        false
+    }
+
+    fn advance(&mut self) -> bool {
+        let position = self.offset + self.chunk.len();
+        if position >= self.view.size() as usize {
+            return false;
+        }
+        self.chunk = self.chunk_from(position);
+        self.offset = position;
+        true
+    }
+
+    fn backtrack(&mut self) -> bool {
+        if self.offset == 0 {
+            return false;
+        }
+        (self.offset, self.chunk) = self.chunk_before(self.offset);
+        true
+    }
+
+    fn total_bytes(&self) -> Option<usize> {
+        Some(self.view.size() as usize)
+    }
+
+    fn offset(&self) -> usize {
+        self.offset
     }
 }
 

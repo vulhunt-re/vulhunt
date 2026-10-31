@@ -1,3 +1,5 @@
+use fugue::core::storage::SegmentView;
+use fugue::lifter::runtime::input::MAX_INSN_BYTES;
 use fugue::lifter::runtime::language::Language;
 use fugue::lifter::runtime::pcode::LiftingContext;
 use fugue::specs::pattern::PatternMatchIter;
@@ -9,8 +11,7 @@ use petgraph::visit::EdgeRef;
 use regex::RegexSet;
 
 use super::{
-    register_var, AddressRangeSet, Arch, ContextBitRange, ContextUpdates, ErasedArch,
-    FunctionThunkTemplate,
+    AddressRangeSet, Arch, ContextBitRange, ContextUpdates, ErasedArch, FunctionThunkTemplate,
 };
 use crate::cfg::block::BlockInfoTable;
 use crate::cfg::function::FunctionStarts;
@@ -19,6 +20,7 @@ use crate::ir::{Address, Expr, Term, Var};
 use crate::kb::function::Function;
 use crate::kb::{uuid, Lazy, Uuid};
 use crate::lifter::Lifter;
+use crate::region::{MemoryReader, Region, SegmentCursor};
 
 #[derive(Copy, Clone, Default)]
 pub struct ARM;
@@ -59,34 +61,47 @@ impl Arch for ARM {
     fn gprs(&self, language: &'static Language) -> Vec<Var> {
         || -> Option<Vec<Var>> {
             Some(vec![
-                register_var(language, "r0")?,
-                register_var(language, "r1")?,
-                register_var(language, "r2")?,
-                register_var(language, "r3")?,
-                register_var(language, "r4")?,
-                register_var(language, "r5")?,
-                register_var(language, "r6")?,
-                register_var(language, "r7")?,
-                register_var(language, "r8")?,
-                register_var(language, "r9")?,
-                register_var(language, "r10")?,
-                register_var(language, "r11")?,
-                register_var(language, "r12")?,
-                register_var(language, "sp")?,
-                register_var(language, "lr")?,
-                register_var(language, "pc")?,
+                Var::from_varnode(language, &language.register_by_name("r0")?),
+                Var::from_varnode(language, &language.register_by_name("r1")?),
+                Var::from_varnode(language, &language.register_by_name("r2")?),
+                Var::from_varnode(language, &language.register_by_name("r3")?),
+                Var::from_varnode(language, &language.register_by_name("r4")?),
+                Var::from_varnode(language, &language.register_by_name("r5")?),
+                Var::from_varnode(language, &language.register_by_name("r6")?),
+                Var::from_varnode(language, &language.register_by_name("r7")?),
+                Var::from_varnode(language, &language.register_by_name("r8")?),
+                Var::from_varnode(language, &language.register_by_name("r9")?),
+                Var::from_varnode(language, &language.register_by_name("r10")?),
+                Var::from_varnode(language, &language.register_by_name("r11")?),
+                Var::from_varnode(language, &language.register_by_name("r12")?),
+                Var::from_varnode(language, &language.register_by_name("sp")?),
+                Var::from_varnode(language, &language.register_by_name("lr")?),
+                Var::from_varnode(language, &language.register_by_name("pc")?),
             ])
         }()
         .unwrap_or_default()
     }
 
-    fn invalid_or_nonsense_ranges(&self, start: Address, bytes: &[u8]) -> AddressRangeSet {
+    fn invalid_or_nonsense_ranges(
+        &self,
+        start: Address,
+        segment: &Region,
+        reader: &mut MemoryReader<'_>,
+    ) -> AddressRangeSet {
         use yaxpeax_arch::*;
         use yaxpeax_arm::armv7::{ConditionCode, DecodeError, InstDecoder, Opcode, Operand};
 
+        let size = segment.len();
+        let view = reader.bytes_at(*segment.address(), size);
+        let run = view
+            .as_ref()
+            .and_then(SegmentView::as_contiguous)
+            .unwrap_or_default();
+        let mut insn_bytes = [0u8; MAX_INSN_BYTES];
+
         let mut address = start;
         let mut offset = 0usize;
-        let mut invalid_or_nonsense = AddressRangeSet::new_with(address, bytes.len());
+        let mut invalid_or_nonsense = AddressRangeSet::new_with(address, size);
 
         let decoder = InstDecoder::default();
         let decoder_thumb = InstDecoder::default_thumb();
@@ -102,8 +117,18 @@ impl Arch for ARM {
             }
         };
 
-        while offset < bytes.len() {
-            match try_decode_slice(&bytes[offset..]) {
+        while offset < size {
+            let bytes = match run.get(offset..) {
+                Some(bytes) if bytes.len() >= MAX_INSN_BYTES => bytes,
+                _ => {
+                    let read = reader
+                        .read_bytes(*segment.address() + offset, &mut insn_bytes)
+                        .unwrap_or(0);
+                    &insn_bytes[..read]
+                }
+            };
+
+            match try_decode_slice(bytes) {
                 Ok(insn) => {
                     match (insn.condition, insn.opcode) {
                         (ConditionCode::EQ, Opcode::AND) => {
@@ -259,10 +284,10 @@ impl Arch for ARM {
     fn function_start_patterns<'a>(
         &self,
         lifter: &Lifter,
-        bytes: &'a [u8],
+        cursor: SegmentCursor<'a, '_>,
     ) -> Option<PatternMatchIter<'a>> {
         if lifter.language().insn_endian().is_little() {
-            Some(ARM_LE_PAT.matches(bytes))
+            Some(ARM_LE_PAT.matches_cursor(cursor))
         } else {
             None
         }
@@ -273,7 +298,7 @@ impl Arch for ARM {
         lifter: &Lifter,
         ctx: &mut LiftingContext,
         start: Address,
-        bytes: &[u8],
+        cursor: SegmentCursor<'_, '_>,
         mut f: F,
     ) where
         Self: Sized,
@@ -283,7 +308,7 @@ impl Arch for ARM {
         let mut thumb_functions = 0usize;
         let mut arm_functions = 0usize;
 
-        if let Some(matches) = <Self as Arch>::function_start_patterns(self, lifter, bytes) {
+        if let Some(matches) = <Self as Arch>::function_start_patterns(self, lifter, cursor) {
             for (range, context, _confidence) in matches {
                 let addr = start + range.start;
                 // discard if not aligned
@@ -355,19 +380,9 @@ impl ARM {
     }
 
     pub fn check_variant(elf: &Elf, bytes: &[u8]) -> &'static str {
-        let variant = Self::check_isa_variant(elf, bytes);
-        if !elf.little_endian && elf.header.e_flags & EF_ARM_BE8 != 0 {
-            if variant == "v8T" {
-                "v8LEInstruction"
-            } else {
-                "v7LEInstruction"
-            }
-        } else {
-            variant
-        }
-    }
+        let be8 = !elf.little_endian && elf.header.e_flags & EF_ARM_BE8 != 0;
+        let v7 = if be8 { "v7LEInstruction" } else { "v7" };
 
-    fn check_isa_variant(elf: &Elf, bytes: &[u8]) -> &'static str {
         // parse .ARM.attributes
         let Some(arm_attributes_section) = elf.section_headers.iter().find(|&section| {
             elf.shdr_strtab
@@ -375,7 +390,7 @@ impl ARM {
                 .map(|name| name == ".ARM.attributes")
                 .unwrap_or(false)
         }) else {
-            return "v7";
+            return v7;
         };
 
         let offset = arm_attributes_section.sh_offset as usize;
@@ -384,11 +399,11 @@ impl ARM {
             tracing::debug!(
                 "section data for .ARM.attributes seems corrputed (empty section); using v7"
             );
-            return "v7";
+            return v7;
         }
         let Some(section_data) = bytes.get(offset..offset.saturating_add(size)) else {
             tracing::debug!("section data for .ARM.attributes seems corrupted; using v7");
-            return "v7";
+            return v7;
         };
 
         let mut cpu_arch;
@@ -425,9 +440,13 @@ impl ARM {
         }
 
         if thumb_isa_use > 0 && arm_isa_use == 0 {
-            "v8T"
+            if be8 {
+                "v8LEInstruction"
+            } else {
+                "v8T"
+            }
         } else {
-            "v7"
+            v7
         }
     }
 }

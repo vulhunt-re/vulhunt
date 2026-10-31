@@ -2,9 +2,10 @@ use std::collections::BTreeSet;
 use std::mem::transmute;
 use std::time::Duration;
 
+use fugue::lifter::runtime::pcode::Varnode;
+
 use crate::decompiler::error::DecompilerError;
 use crate::decompiler::ffi::{AddressRange, GhidraDecompiler, VariableNameRef};
-use crate::decompiler::is_register;
 use crate::decompiler::symbols::DecompilerSymbolResolver;
 use crate::decompiler::types::{
     DataType, DataTypeRef, DecompilerTypeDB, DecompilerTypeResolver, SpaceKind, VarInfo,
@@ -261,7 +262,14 @@ impl<'a> DecompilerProjectRef<'a> {
                 var.size as _,
             ),
             SpaceKind::Register => {
-                if is_register(project.lifter(), var.offset, var.size) {
+                let language = project.lifter().language();
+                let varnode = u16::try_from(var.size)
+                    .ok()
+                    .map(|size| Varnode::new(language.register_space(), var.offset, size));
+                if varnode.is_some_and(|varnode| {
+                    language.register_name(&varnode).is_some()
+                        || language.containing_register(&varnode).is_some()
+                }) {
                     self.resolver.resolve_register_symbol(
                         project,
                         name.as_ref(),
@@ -336,7 +344,14 @@ impl<'a> DecompilerProjectRef<'a> {
                 var.size as _,
             ),
             SpaceKind::Register => {
-                if is_register(project.lifter(), var.offset, var.size) {
+                let language = project.lifter().language();
+                let varnode = u16::try_from(var.size)
+                    .ok()
+                    .map(|size| Varnode::new(language.register_space(), var.offset, size));
+                if varnode.is_some_and(|varnode| {
+                    language.register_name(&varnode).is_some()
+                        || language.containing_register(&varnode).is_some()
+                }) {
                     self.resolver.resolve_register_type(
                         project,
                         at.into(),

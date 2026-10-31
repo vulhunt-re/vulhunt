@@ -11,9 +11,11 @@ use std::time::Duration;
 use bias_core::analyses::blocks::CodeBlockBounds;
 use bias_core::analyses::symbolic::typed::{AliasOrigin, NamedValue};
 use bias_core::fugue::core::storage::SegmentView;
+use bias_core::fugue::specs::Cursor;
 use bias_core::ir::insn::InsnText;
 use bias_core::prelude::graph::algo::has_path_connecting;
 use bias_core::prelude::*;
+use bias_core::region::SegmentCursor;
 
 use bias_core::decompiler::{Decompiler, DecompilerAst, DecompilerConfig};
 
@@ -42,6 +44,7 @@ use regex::Regex;
 
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
+use smallvec::SmallVec;
 
 use crate::analysis::{FindingData, FindingKind, Provenance, VariantData, CVSS, CWE, MBC};
 use crate::engine::Engine;
@@ -1036,9 +1039,12 @@ impl<'a> CallSiteContext<'a> {
 
     fn const_cstr(&self, from: &AliasValue) -> Option<String> {
         self.with_bytes(from, |view| {
-            StringData::Ascii
-                .decode(view.as_contiguous().unwrap_or_default())
-                .ok()
+            let mut cursor = SegmentCursor::new(view);
+            let mut string = StringData::Ascii.decode(cursor.chunk()).ok()?;
+            while string.len() == cursor.offset() + cursor.chunk().len() && cursor.advance() {
+                string.push_str(&StringData::Ascii.decode(cursor.chunk()).ok()?);
+            }
+            Some(string)
         })
         .flatten()
     }
@@ -1388,21 +1394,19 @@ impl<'a> UserData for FunctionContext<'a> {
         methods.add_method("find", |lua, this, pat: PatternMatcher| {
             this.bytes()
                 .find_map(|(addr, bytes)| {
-                    pat.find_iter(bytes.as_contiguous().unwrap_or_default())
+                    pat.find_iter_cursor(SegmentCursor::new(&bytes))
                         .next()
-                        .map(|off| lua.create_ser_userdata(AddressValue::from(addr + off.start())))
+                        .map(|off| lua.create_ser_userdata(AddressValue::from(addr + off.start)))
                 })
                 .transpose()
         });
 
         methods.add_method("matches", |_lua, this, pat: PatternMatcher| {
-            Ok(this
-                .bytes()
-                .any(|(_, bytes)| {
-                    pat.find_iter(bytes.as_contiguous().unwrap_or_default())
-                        .next()
-                        .is_some()
-                }))
+            Ok(this.bytes().any(|(_, bytes)| {
+                pat.find_iter_cursor(SegmentCursor::new(&bytes))
+                    .next()
+                    .is_some()
+            }))
         });
 
         methods.add_method("blocks", |_lua, this, ()| {
@@ -1683,18 +1687,22 @@ impl<'a> OperandInfo<'a> {
 
         let pre_call_bytes = pre_call_operand.and_then(|opnd| {
             self.state.with_bytes(&opnd.v, |view| {
-                let mut bytes = vec![0; (view.size() as usize).min(256)];
+                let mut bytes =
+                    SmallVec::from_buf_and_len([0u8; 256], (view.size() as usize).min(256));
                 view.read_into(&mut bytes);
                 bytes
             })
         });
 
         let pre_call_bytesf = lua
-            .create_function(move |_, limit: Option<usize>| {
+            .create_function(move |lua, limit: Option<usize>| {
                 if let Some(bytes) = pre_call_bytes.as_ref() {
                     let limit = limit.unwrap_or(256).min(bytes.len());
 
-                    Ok(bytes.get(..limit).map(|bytes| bytes.to_vec()))
+                    bytes
+                        .get(..limit)
+                        .map(|bytes| lua.create_sequence_from(bytes.iter().copied()))
+                        .transpose()
                 } else {
                     Ok(None)
                 }
@@ -1703,18 +1711,22 @@ impl<'a> OperandInfo<'a> {
 
         let post_call_bytes = operand.and_then(|opnd| {
             self.state.with_bytes(&opnd.v, |view| {
-                let mut bytes = vec![0; (view.size() as usize).min(256)];
+                let mut bytes =
+                    SmallVec::from_buf_and_len([0u8; 256], (view.size() as usize).min(256));
                 view.read_into(&mut bytes);
                 bytes
             })
         });
 
         let post_call_bytesf = lua
-            .create_function(move |_, limit: Option<usize>| {
+            .create_function(move |lua, limit: Option<usize>| {
                 if let Some(bytes) = post_call_bytes.as_ref() {
                     let limit = limit.unwrap_or(256).min(bytes.len());
 
-                    Ok(bytes.get(..limit).map(|bytes| bytes.to_vec()))
+                    bytes
+                        .get(..limit)
+                        .map(|bytes| lua.create_sequence_from(bytes.iter().copied()))
+                        .transpose()
                 } else {
                     Ok(None)
                 }
@@ -1882,43 +1894,52 @@ impl<'a> UserData for OperandInfo<'a> {
                 .unwrap_or(true))
         });
 
-        methods.add_method("pre_call_bytes", |_lua, this, args: (Option<usize>,)| {
+        methods.add_method("pre_call_bytes", |lua, this, args: (Option<usize>,)| {
             let limit = args.0.unwrap_or(256).min(256); // OK?
             let Some(operand) = this.pre_call_operand() else {
                 return Ok(None);
             };
 
-            Ok(this.state.with_bytes(&operand.v, |view| {
-                let mut bytes = vec![0; (view.size() as usize).min(limit)];
-                view.read_into(&mut bytes);
-                bytes
-            }))
+            this.state
+                .with_bytes(&operand.v, |view| {
+                    let mut bytes = [0u8; 256];
+                    let bytes = &mut bytes[..(view.size() as usize).min(limit)];
+                    view.read_into(bytes);
+                    lua.create_sequence_from(bytes.iter().copied())
+                })
+                .transpose()
         });
 
-        methods.add_method("post_call_bytes", |_lua, this, args: (Option<usize>,)| {
+        methods.add_method("post_call_bytes", |lua, this, args: (Option<usize>,)| {
             let limit = args.0.unwrap_or(256).min(256);
             let Some(operand) = this.operand() else {
                 return Ok(None);
             };
 
-            Ok(this.state.with_bytes(&operand.v, |view| {
-                let mut bytes = vec![0; (view.size() as usize).min(limit)];
-                view.read_into(&mut bytes);
-                bytes
-            }))
+            this.state
+                .with_bytes(&operand.v, |view| {
+                    let mut bytes = [0u8; 256];
+                    let bytes = &mut bytes[..(view.size() as usize).min(limit)];
+                    view.read_into(bytes);
+                    lua.create_sequence_from(bytes.iter().copied())
+                })
+                .transpose()
         });
 
-        methods.add_method("bytes", |_lua, this, args: (Option<usize>,)| {
+        methods.add_method("bytes", |lua, this, args: (Option<usize>,)| {
             let limit = args.0.unwrap_or(256).min(256);
             let Some(operand) = this.pre_call_operand() else {
                 return Ok(None);
             };
 
-            Ok(this.state.with_bytes(&operand.v, |view| {
-                let mut bytes = vec![0; (view.size() as usize).min(limit)];
-                view.read_into(&mut bytes);
-                bytes
-            }))
+            this.state
+                .with_bytes(&operand.v, |view| {
+                    let mut bytes = [0u8; 256];
+                    let bytes = &mut bytes[..(view.size() as usize).min(limit)];
+                    view.read_into(bytes);
+                    lua.create_sequence_from(bytes.iter().copied())
+                })
+                .transpose()
         })
     }
 }

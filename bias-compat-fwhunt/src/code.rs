@@ -6,6 +6,7 @@ use bias_core::kb::function::Function;
 use bias_core::kb::id::Identifiable;
 use bias_core::project::ProjectContext;
 use bias_core::fugue::core::storage::SegmentView;
+use bias_core::region::SegmentCursor;
 use bias_core::Project;
 
 use crate::bmatch::BMatcher;
@@ -477,7 +478,7 @@ impl Code {
             );
 
             if let Some(offset) = Self::function_bytes(project, f)
-                .find_map(|b| self.pattern.position(b.as_contiguous().unwrap_or_default()))
+                .find_map(|b| self.pattern.positions_cursor(SegmentCursor::new(&b)).next())
             {
                 let location = f.address() + offset;
                 tracing::trace!("found {} at {}", self.pattern, location);
@@ -516,7 +517,7 @@ impl Code {
                     f.address()
                 );
                 if let Some(offset) = Self::function_bytes(project, f)
-                    .find_map(|b| self.pattern.position(b.as_contiguous().unwrap_or_default()))
+                    .find_map(|b| self.pattern.positions_cursor(SegmentCursor::new(&b)).next())
                 {
                     let location = f.address() + offset;
                     tracing::trace!("found {} at {}", self.pattern, location);

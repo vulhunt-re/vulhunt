@@ -1,12 +1,15 @@
+use fugue::core::storage::SegmentView;
+use fugue::lifter::runtime::input::MAX_INSN_BYTES;
 use fugue::lifter::runtime::language::Language;
 use fugue::lifter::runtime::pcode::LiftingContext;
 use fugue::specs::pattern::PatternMatchIter;
 use fugue::specs::PatternSpecs;
 
-use super::{register_var, AddressRangeSet, Arch, ErasedArch, Flag, FunctionThunkTemplate};
+use super::{AddressRangeSet, Arch, ErasedArch, Flag, FunctionThunkTemplate};
 use crate::ir::{Address, Expr, Term, Var};
 use crate::kb::{uuid, Lazy, Uuid};
 use crate::lifter::Lifter;
+use crate::region::{MemoryReader, Region, SegmentCursor};
 
 #[derive(Copy, Clone, Default)]
 #[repr(transparent)]
@@ -30,13 +33,34 @@ impl Arch for X86 {
     fn flags(&self, language: &'static Language) -> Vec<Flag> {
         || -> Option<Vec<Flag>> {
             Some(vec![
-                Flag::c(register_var(language, "CF")?),
-                Flag::p(register_var(language, "PF")?),
-                Flag::a(register_var(language, "AF")?),
-                Flag::z(register_var(language, "ZF")?),
-                Flag::n(register_var(language, "SF")?),
-                Flag::new(register_var(language, "DF")?),
-                Flag::v(register_var(language, "OF")?),
+                Flag::c(Var::from_varnode(
+                    language,
+                    &language.register_by_name("CF")?,
+                )),
+                Flag::p(Var::from_varnode(
+                    language,
+                    &language.register_by_name("PF")?,
+                )),
+                Flag::a(Var::from_varnode(
+                    language,
+                    &language.register_by_name("AF")?,
+                )),
+                Flag::z(Var::from_varnode(
+                    language,
+                    &language.register_by_name("ZF")?,
+                )),
+                Flag::n(Var::from_varnode(
+                    language,
+                    &language.register_by_name("SF")?,
+                )),
+                Flag::new(Var::from_varnode(
+                    language,
+                    &language.register_by_name("DF")?,
+                )),
+                Flag::v(Var::from_varnode(
+                    language,
+                    &language.register_by_name("OF")?,
+                )),
             ])
         }()
         .unwrap_or_default()
@@ -46,25 +70,73 @@ impl Arch for X86 {
         || -> Option<Vec<Var>> {
             let is_64 = self.is_64();
             let mut pfx = vec![
-                register_var(language, if is_64 { "RAX" } else { "EAX" })?,
-                register_var(language, if is_64 { "RBX" } else { "EBX" })?,
-                register_var(language, if is_64 { "RCX" } else { "ECX" })?,
-                register_var(language, if is_64 { "RDX" } else { "EDX" })?,
-                register_var(language, if is_64 { "RSI" } else { "ESI" })?,
-                register_var(language, if is_64 { "RDI" } else { "EDI" })?,
-                register_var(language, if is_64 { "RBP" } else { "EBP" })?,
-                register_var(language, if is_64 { "RSP" } else { "ESP" })?,
+                Var::from_varnode(
+                    language,
+                    &language.register_by_name(if is_64 { "RAX" } else { "EAX" })?,
+                ),
+                Var::from_varnode(
+                    language,
+                    &language.register_by_name(if is_64 { "RBX" } else { "EBX" })?,
+                ),
+                Var::from_varnode(
+                    language,
+                    &language.register_by_name(if is_64 { "RCX" } else { "ECX" })?,
+                ),
+                Var::from_varnode(
+                    language,
+                    &language.register_by_name(if is_64 { "RDX" } else { "EDX" })?,
+                ),
+                Var::from_varnode(
+                    language,
+                    &language.register_by_name(if is_64 { "RSI" } else { "ESI" })?,
+                ),
+                Var::from_varnode(
+                    language,
+                    &language.register_by_name(if is_64 { "RDI" } else { "EDI" })?,
+                ),
+                Var::from_varnode(
+                    language,
+                    &language.register_by_name(if is_64 { "RBP" } else { "EBP" })?,
+                ),
+                Var::from_varnode(
+                    language,
+                    &language.register_by_name(if is_64 { "RSP" } else { "ESP" })?,
+                ),
             ];
 
             if is_64 {
-                pfx.push(register_var(language, "R8")?);
-                pfx.push(register_var(language, "R9")?);
-                pfx.push(register_var(language, "R10")?);
-                pfx.push(register_var(language, "R11")?);
-                pfx.push(register_var(language, "R12")?);
-                pfx.push(register_var(language, "R13")?);
-                pfx.push(register_var(language, "R14")?);
-                pfx.push(register_var(language, "R15")?);
+                pfx.push(Var::from_varnode(
+                    language,
+                    &language.register_by_name("R8")?,
+                ));
+                pfx.push(Var::from_varnode(
+                    language,
+                    &language.register_by_name("R9")?,
+                ));
+                pfx.push(Var::from_varnode(
+                    language,
+                    &language.register_by_name("R10")?,
+                ));
+                pfx.push(Var::from_varnode(
+                    language,
+                    &language.register_by_name("R11")?,
+                ));
+                pfx.push(Var::from_varnode(
+                    language,
+                    &language.register_by_name("R12")?,
+                ));
+                pfx.push(Var::from_varnode(
+                    language,
+                    &language.register_by_name("R13")?,
+                ));
+                pfx.push(Var::from_varnode(
+                    language,
+                    &language.register_by_name("R14")?,
+                ));
+                pfx.push(Var::from_varnode(
+                    language,
+                    &language.register_by_name("R15")?,
+                ));
             }
 
             Some(pfx)
@@ -73,7 +145,9 @@ impl Arch for X86 {
     }
 
     fn frame_pointer(&self, language: &'static Language) -> Option<Var> {
-        register_var(language, if self.is_64() { "RBP" } else { "EBP" })
+        language
+            .register_by_name(if self.is_64() { "RBP" } else { "EBP" })
+            .map(|varnode| Var::from_varnode(language, &varnode))
     }
 
     fn is_nonsense_pattern(&self, bytes: &[u8]) -> bool {
@@ -99,12 +173,17 @@ impl Arch for X86 {
         name == "halt"
     }
 
-    fn invalid_or_nonsense_ranges(&self, start: Address, bytes: &[u8]) -> AddressRangeSet {
+    fn invalid_or_nonsense_ranges(
+        &self,
+        start: Address,
+        segment: &Region,
+        reader: &mut MemoryReader<'_>,
+    ) -> AddressRangeSet {
         if self.is_64() {
-            self.invalid_or_nonsense_ranges_64(start, bytes)
+            self.invalid_or_nonsense_ranges_64(start, segment, reader)
         } else {
             // 32-bit
-            self.invalid_or_nonsense_ranges_32(start, bytes)
+            self.invalid_or_nonsense_ranges_32(start, segment, reader)
         }
     }
 
@@ -122,10 +201,10 @@ impl Arch for X86 {
     fn function_start_patterns<'a>(
         &self,
         _lifter: &Lifter,
-        bytes: &'a [u8],
+        cursor: SegmentCursor<'a, '_>,
     ) -> Option<PatternMatchIter<'a>> {
         if self.is_64() {
-            Some(X86_64_PAT.matches(bytes))
+            Some(X86_64_PAT.matches_cursor(cursor))
         } else {
             None
         }
@@ -136,13 +215,13 @@ impl Arch for X86 {
         lifter: &Lifter,
         _ctx: &mut LiftingContext,
         start: Address,
-        bytes: &[u8],
+        cursor: SegmentCursor<'_, '_>,
         mut f: F,
     ) where
         Self: Sized,
         F: FnMut(Address),
     {
-        if let Some(matches) = <Self as Arch>::function_start_patterns(self, lifter, bytes) {
+        if let Some(matches) = <Self as Arch>::function_start_patterns(self, lifter, cursor) {
             for (range, _context, _confidence) in matches {
                 let addr = start + range.start;
                 f(addr);
@@ -160,18 +239,41 @@ impl X86 {
         self.0 == ARCH_X86_64
     }
 
-    fn invalid_or_nonsense_ranges_32(&self, start: Address, bytes: &[u8]) -> AddressRangeSet {
+    fn invalid_or_nonsense_ranges_32(
+        &self,
+        start: Address,
+        segment: &Region,
+        reader: &mut MemoryReader<'_>,
+    ) -> AddressRangeSet {
         use yaxpeax_arch::*;
         use yaxpeax_x86::protected_mode::{register_class, InstDecoder, Opcode, Operand};
 
+        let size = segment.len();
+        let view = reader.bytes_at(*segment.address(), size);
+        let run = view
+            .as_ref()
+            .and_then(SegmentView::as_contiguous)
+            .unwrap_or_default();
+        let mut insn_bytes = [0u8; MAX_INSN_BYTES];
+
         let mut address = start;
         let mut offset = 0usize;
-        let mut invalid_or_nonsense = AddressRangeSet::new_with(address, bytes.len());
+        let mut invalid_or_nonsense = AddressRangeSet::new_with(address, size);
 
         let decoder = InstDecoder::default();
 
-        while offset < bytes.len() {
-            if let Ok(inst) = decoder.decode_slice(&bytes[offset..]) {
+        while offset < size {
+            let bytes = match run.get(offset..) {
+                Some(bytes) if bytes.len() >= MAX_INSN_BYTES => bytes,
+                _ => {
+                    let read = reader
+                        .read_bytes(*segment.address() + offset, &mut insn_bytes)
+                        .unwrap_or(0);
+                    &insn_bytes[..read]
+                }
+            };
+
+            if let Ok(inst) = decoder.decode_slice(bytes) {
                 match inst.opcode() {
                     Opcode::ADD => {
                         let op1 = inst.operand(0);
@@ -214,18 +316,41 @@ impl X86 {
         invalid_or_nonsense
     }
 
-    fn invalid_or_nonsense_ranges_64(&self, start: Address, bytes: &[u8]) -> AddressRangeSet {
+    fn invalid_or_nonsense_ranges_64(
+        &self,
+        start: Address,
+        segment: &Region,
+        reader: &mut MemoryReader<'_>,
+    ) -> AddressRangeSet {
         use yaxpeax_arch::*;
         use yaxpeax_x86::long_mode::{register_class, InstDecoder, Opcode, Operand};
 
+        let size = segment.len();
+        let view = reader.bytes_at(*segment.address(), size);
+        let run = view
+            .as_ref()
+            .and_then(SegmentView::as_contiguous)
+            .unwrap_or_default();
+        let mut insn_bytes = [0u8; MAX_INSN_BYTES];
+
         let mut address = start;
         let mut offset = 0usize;
-        let mut invalid_or_nonsense = AddressRangeSet::new_with(address, bytes.len());
+        let mut invalid_or_nonsense = AddressRangeSet::new_with(address, size);
 
         let decoder = InstDecoder::default();
 
-        while offset < bytes.len() {
-            if let Ok(inst) = decoder.decode_slice(&bytes[offset..]) {
+        while offset < size {
+            let bytes = match run.get(offset..) {
+                Some(bytes) if bytes.len() >= MAX_INSN_BYTES => bytes,
+                _ => {
+                    let read = reader
+                        .read_bytes(*segment.address() + offset, &mut insn_bytes)
+                        .unwrap_or(0);
+                    &insn_bytes[..read]
+                }
+            };
+
+            if let Ok(inst) = decoder.decode_slice(bytes) {
                 match inst.opcode() {
                     Opcode::ADD => {
                         let op1 = inst.operand(0);

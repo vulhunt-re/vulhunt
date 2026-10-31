@@ -35,6 +35,7 @@ use crate::kb::function::{Function, FunctionId};
 use crate::kb::id::Identifiable;
 use crate::kb::{uuid, Uuid};
 use crate::lifter::Lifter;
+use crate::region::{MemoryReader, Region, SegmentCursor};
 
 pub mod aarch64;
 pub mod arm;
@@ -396,12 +397,6 @@ impl FunctionThunkTemplate {
     }
 }
 
-fn register_var(language: &Language, name: &str) -> Option<Var> {
-    language
-        .register_by_name(name)
-        .map(|varnode| Var::from_varnode(language, &varnode))
-}
-
 pub trait Arch: Send + Sync {
     fn id(&self) -> Uuid;
 
@@ -451,7 +446,12 @@ pub trait Arch: Send + Sync {
     }
 
     #[allow(unused)]
-    fn invalid_or_nonsense_ranges(&self, start: Address, bytes: &[u8]) -> AddressRangeSet {
+    fn invalid_or_nonsense_ranges(
+        &self,
+        start: Address,
+        segment: &Region,
+        reader: &mut MemoryReader<'_>,
+    ) -> AddressRangeSet {
         AddressRangeSet::default()
     }
 
@@ -667,7 +667,7 @@ pub trait Arch: Send + Sync {
     fn function_start_patterns<'a>(
         &self,
         lifter: &Lifter,
-        bytes: &'a [u8],
+        cursor: SegmentCursor<'a, '_>,
     ) -> Option<PatternMatchIter<'a>> {
         None
     }
@@ -678,7 +678,7 @@ pub trait Arch: Send + Sync {
         lifter: &Lifter,
         ctx: &mut LiftingContext,
         start: Address,
-        bytes: &[u8],
+        cursor: SegmentCursor<'_, '_>,
         f: F,
     ) where
         F: FnMut(Address),
@@ -707,7 +707,12 @@ pub trait ErasedArch: DynClone + Send + Sync {
 
     fn is_mapping_symbol(&self, symbol: &str) -> bool;
 
-    fn invalid_or_nonsense_ranges(&self, start: Address, bytes: &[u8]) -> AddressRangeSet;
+    fn invalid_or_nonsense_ranges(
+        &self,
+        start: Address,
+        segment: &Region,
+        reader: &mut MemoryReader<'_>,
+    ) -> AddressRangeSet;
 
     fn is_tail_call(
         &self,
@@ -749,7 +754,7 @@ pub trait ErasedArch: DynClone + Send + Sync {
     fn function_start_patterns<'a>(
         &self,
         lifter: &Lifter,
-        bytes: &'a [u8],
+        cursor: SegmentCursor<'a, '_>,
     ) -> Option<PatternMatchIter<'a>>;
 
     fn for_each_function_by_pattern(
@@ -757,7 +762,7 @@ pub trait ErasedArch: DynClone + Send + Sync {
         lifter: &Lifter,
         ctx: &mut LiftingContext,
         start: Address,
-        bytes: &[u8],
+        cursor: SegmentCursor<'_, '_>,
         f: &mut dyn FnMut(Address),
     );
 }
@@ -807,8 +812,13 @@ where
         <T as Arch>::is_mapping_symbol(&self, symbol)
     }
 
-    fn invalid_or_nonsense_ranges(&self, start: Address, bytes: &[u8]) -> AddressRangeSet {
-        <T as Arch>::invalid_or_nonsense_ranges(&self, start, bytes)
+    fn invalid_or_nonsense_ranges(
+        &self,
+        start: Address,
+        segment: &Region,
+        reader: &mut MemoryReader<'_>,
+    ) -> AddressRangeSet {
+        <T as Arch>::invalid_or_nonsense_ranges(&self, start, segment, reader)
     }
 
     fn is_tail_call(
@@ -863,9 +873,9 @@ where
     fn function_start_patterns<'a>(
         &self,
         lifter: &Lifter,
-        bytes: &'a [u8],
+        cursor: SegmentCursor<'a, '_>,
     ) -> Option<PatternMatchIter<'a>> {
-        <T as Arch>::function_start_patterns(&self, lifter, bytes)
+        <T as Arch>::function_start_patterns(&self, lifter, cursor)
     }
 
     fn for_each_function_by_pattern<F>(
@@ -873,12 +883,12 @@ where
         lifter: &Lifter,
         ctx: &mut LiftingContext,
         start: Address,
-        bytes: &[u8],
+        cursor: SegmentCursor<'_, '_>,
         mut f: F,
     ) where
         F: FnMut(Address),
     {
-        <T as Arch>::for_each_function_by_pattern(&self, lifter, ctx, start, bytes, &mut f);
+        <T as Arch>::for_each_function_by_pattern(&self, lifter, ctx, start, cursor, &mut f);
     }
 }
 
@@ -923,8 +933,13 @@ impl Arch for dyn ErasedArch {
         Self::is_mapping_symbol(&*self, symbol)
     }
 
-    fn invalid_or_nonsense_ranges(&self, start: Address, bytes: &[u8]) -> AddressRangeSet {
-        Self::invalid_or_nonsense_ranges(&*self, start, bytes)
+    fn invalid_or_nonsense_ranges(
+        &self,
+        start: Address,
+        segment: &Region,
+        reader: &mut MemoryReader<'_>,
+    ) -> AddressRangeSet {
+        Self::invalid_or_nonsense_ranges(&*self, start, segment, reader)
     }
 
     fn is_tail_call(
@@ -979,9 +994,9 @@ impl Arch for dyn ErasedArch {
     fn function_start_patterns<'a>(
         &self,
         lifter: &Lifter,
-        bytes: &'a [u8],
+        cursor: SegmentCursor<'a, '_>,
     ) -> Option<PatternMatchIter<'a>> {
-        Self::function_start_patterns(&*self, lifter, bytes)
+        Self::function_start_patterns(&*self, lifter, cursor)
     }
 
     fn for_each_function_by_pattern<F>(
@@ -989,12 +1004,12 @@ impl Arch for dyn ErasedArch {
         lifter: &Lifter,
         ctx: &mut LiftingContext,
         start: Address,
-        bytes: &[u8],
+        cursor: SegmentCursor<'_, '_>,
         mut f: F,
     ) where
         F: FnMut(Address),
     {
-        Self::for_each_function_by_pattern(&*self, lifter, ctx, start, bytes, &mut f);
+        Self::for_each_function_by_pattern(&*self, lifter, ctx, start, cursor, &mut f);
     }
 }
 
@@ -1042,8 +1057,13 @@ where
         <T as Arch>::is_mapping_symbol(&self, symbol)
     }
 
-    fn invalid_or_nonsense_ranges(&self, start: Address, bytes: &[u8]) -> AddressRangeSet {
-        <T as Arch>::invalid_or_nonsense_ranges(&self, start, bytes)
+    fn invalid_or_nonsense_ranges(
+        &self,
+        start: Address,
+        segment: &Region,
+        reader: &mut MemoryReader<'_>,
+    ) -> AddressRangeSet {
+        <T as Arch>::invalid_or_nonsense_ranges(&self, start, segment, reader)
     }
 
     fn is_tail_call(
@@ -1098,9 +1118,9 @@ where
     fn function_start_patterns<'a>(
         &self,
         lifter: &Lifter,
-        bytes: &'a [u8],
+        cursor: SegmentCursor<'a, '_>,
     ) -> Option<PatternMatchIter<'a>> {
-        <T as Arch>::function_start_patterns(&self, lifter, bytes)
+        <T as Arch>::function_start_patterns(&self, lifter, cursor)
     }
 
     fn for_each_function_by_pattern(
@@ -1108,10 +1128,10 @@ where
         lifter: &Lifter,
         ctx: &mut LiftingContext,
         start: Address,
-        bytes: &[u8],
+        cursor: SegmentCursor<'_, '_>,
         f: &mut dyn FnMut(Address),
     ) {
-        <T as Arch>::for_each_function_by_pattern(&self, lifter, ctx, start, bytes, f);
+        <T as Arch>::for_each_function_by_pattern(&self, lifter, ctx, start, cursor, f);
     }
 }
 

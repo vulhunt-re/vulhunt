@@ -180,8 +180,9 @@ impl DataTypeDB {
         reader: &mut MemoryReader,
         address: impl Into<Address>,
     ) -> Option<DataInfo> {
-        let bytes = reader.bytes_at(address.into(), MAX_STRING_LENGTH)?;
-        self.identify_data(memory, bytes.as_contiguous()?)
+        let mut bytes = [0u8; MAX_STRING_LENGTH];
+        let read = reader.read_bytes(address.into(), &mut bytes).ok()?;
+        self.identify_data(memory, &bytes[..read])
     }
 
     pub fn identify_data(&self, memory: &Memory, bytes: &[u8]) -> Option<DataInfo> {

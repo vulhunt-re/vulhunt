@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use fugue::lifter::runtime::pcode::Varnode;
 use regex::Regex;
 pub use tree_sitter::Tree;
 pub use weggli::result::{CaptureResult, QueryResult};
@@ -10,7 +11,7 @@ use crate::decompiler::annotation::DecompilerAnnotationDB;
 use crate::decompiler::ffi::HighVarWithType;
 pub use crate::decompiler::ffi::{JumpTableInfo, LoadTableInfo};
 use crate::decompiler::types::{DataTypeRef, SpaceKind};
-use crate::decompiler::{is_register, DecompilerError};
+use crate::decompiler::DecompilerError;
 use crate::prelude::*;
 
 #[derive(Debug, Clone)]
@@ -87,7 +88,14 @@ impl<'a> HighVarRef<'a> {
     pub fn variable(&self, lifter: &Lifter) -> Option<Var> {
         match self.0.space {
             SpaceKind::Register => {
-                if is_register(lifter, self.0.offset, self.0.size) {
+                let language = lifter.language();
+                let varnode = u16::try_from(self.0.size)
+                    .ok()
+                    .map(|size| Varnode::new(language.register_space(), self.0.offset, size));
+                if varnode.is_some_and(|varnode| {
+                    language.register_name(&varnode).is_some()
+                        || language.containing_register(&varnode).is_some()
+                }) {
                     Some(Var::new0(
                         lifter.register_space_id(),
                         self.0.offset,

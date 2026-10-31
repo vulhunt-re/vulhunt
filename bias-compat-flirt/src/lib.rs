@@ -255,14 +255,15 @@ impl FLIRTDB {
 
                 let size = (f_last.offset() - address.offset()) as usize;
 
-                let Some(view) = reader
-                    .bytes_at(address, size)
-                    .filter(|bytes| bytes.size() == size as u64)
-                else {
+                let Some(view) = reader.bytes_at(address, size) else {
                     continue;
                 };
 
-                let signatures = sigset.r#match(view.as_contiguous().unwrap_or_default());
+                let Some(bytes) = view.as_contiguous().filter(|bytes| bytes.len() == size) else {
+                    continue;
+                };
+
+                let signatures = sigset.r#match(bytes);
 
                 for signature in signatures.into_iter() {
                     'name: for name in signature.names.iter() {

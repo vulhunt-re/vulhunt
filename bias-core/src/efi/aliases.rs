@@ -1,9 +1,12 @@
+use fugue::specs::Cursor;
+
 use crate::analyses::symbolic::typed::*;
 use crate::efi::guids::GUID_LEN;
 use crate::efi::pei::SIDT;
 use crate::efi::services::EFI_PEI_PPI_DESCRIPTOR_TERMINATE_LIST;
 use crate::prelude::efi::*;
 use crate::prelude::*;
+use crate::region::SegmentCursor;
 
 pub struct EFITypeResolver<'a> {
     guiddb: &'a GuidDB,
@@ -42,13 +45,10 @@ impl<'a> EFITypeResolver<'a> {
     ) -> Option<Term<Type>> {
         context
             .with_bytes(from, |view| {
-                if view.size() < GUID_LEN as u64 {
-                    return None;
-                }
-
                 let mut guid = [0u8; GUID_LEN];
-                view.read_into(&mut guid);
-                self.resolve_protocol_type(context, &guid)
+                let guid = &mut guid[..(view.size() as usize).min(GUID_LEN)];
+                view.read_into(guid);
+                self.resolve_protocol_type(context, guid)
             })
             .flatten()
     }
@@ -78,22 +78,37 @@ impl<'a> EFITypeResolver<'a> {
                 let mut ppis = Vec::new();
                 let mut reader = context.memory.reader();
 
-                for ppi_bytes in view
-                    .as_contiguous()
-                    .unwrap_or_default()
-                    .chunks_exact(type_bytes)
-                {
-                    let flags_bytes =
-                        &ppi_bytes[flags.offset()..flags.offset() + flags.type_().nbytes()];
-                    let guidp_bytes =
-                        &ppi_bytes[guidp.offset()..guidp.offset() + guidp.type_().nbytes()];
-                    let pointer_bytes =
-                        &ppi_bytes[pointer.offset()..pointer.offset() + pointer.type_().nbytes()];
+                let size = view.size() as usize;
+                let mut cursor = SegmentCursor::new(view);
+                let mut offset = 0;
+
+                while offset + type_bytes <= size {
+                    let [flags_bytes, guidp_bytes, pointer_bytes] =
+                        [flags, guidp, pointer].map(|field| {
+                            let mut bytes = [0u8; size_of::<u64>()];
+                            let len = field.type_().nbytes();
+                            for (position, byte) in
+                                (offset + field.offset()..).zip(bytes[..len].iter_mut())
+                            {
+                                while cursor.offset() + cursor.chunk().len() <= position {
+                                    cursor.advance();
+                                }
+                                *byte = cursor.chunk()[position - cursor.offset()];
+                            }
+                            (bytes, len)
+                        });
+                    offset += type_bytes;
 
                     // TODO: make endianness generic
-                    let flags = BitVec::from_le_bytes(flags_bytes).to_u32().unwrap();
-                    let _guidp = BitVec::from_le_bytes(guidp_bytes).to_address().unwrap();
-                    let pointer = BitVec::from_le_bytes(pointer_bytes).to_address().unwrap();
+                    let flags = BitVec::from_le_bytes(&flags_bytes.0[..flags_bytes.1])
+                        .to_u32()
+                        .unwrap();
+                    let _guidp = BitVec::from_le_bytes(&guidp_bytes.0[..guidp_bytes.1])
+                        .to_address()
+                        .unwrap();
+                    let pointer = BitVec::from_le_bytes(&pointer_bytes.0[..pointer_bytes.1])
+                        .to_address()
+                        .unwrap();
 
                     if notify {
                         ppis.push(pointer);

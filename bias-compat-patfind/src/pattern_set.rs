@@ -6,6 +6,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use fugue_bytes::Endian;
+use regex_cursor::Cursor;
 
 use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -75,6 +76,23 @@ impl PatternSet {
                     self.patterns
                         .iter()
                         .flat_map(|pattern| pattern.matches(bytes)),
+                ),
+        ))
+    }
+
+    pub fn matches_cursor<'a, C: Cursor + Clone + 'a>(
+        &'a self,
+        cursor: C,
+    ) -> PatternSetMatchIter<'a> {
+        let groups_cursor = cursor.clone();
+        PatternSetMatchIter(Box::new(
+            self.groups
+                .iter()
+                .flat_map(move |group| group.matches_cursor(groups_cursor.clone()))
+                .chain(
+                    self.patterns
+                        .iter()
+                        .flat_map(move |pattern| pattern.matches_cursor(cursor.clone())),
                 ),
         ))
     }
@@ -415,6 +433,24 @@ impl PatternGroup {
                 })
         })
     }
+
+    pub fn matches_cursor<'a, C: Cursor + Clone + 'a>(
+        &'a self,
+        cursor: C,
+    ) -> impl Iterator<Item = (Range<usize>, &'a PatternContext)> + 'a {
+        self.post_patterns.patterns.iter().flat_map(move |pattern| {
+            let mut verifier = cursor.clone();
+            pattern
+                .find_iter_cursor(cursor.clone())
+                .filter(move |range| {
+                    self.pre_patterns.iter().any(|pre_pattern| {
+                        pre_pattern.matches_end_cursor(&mut verifier, range.start)
+                            && pre_pattern.bits() + pattern.bits() >= self.total_bits
+                    })
+                })
+                .map(|range| (range, &self.post_patterns.context))
+        })
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -442,6 +478,17 @@ impl PatternsWithContext {
                         None
                     }
                 })
+        })
+    }
+
+    pub fn matches_cursor<'a, C: Cursor + Clone + 'a>(
+        &'a self,
+        cursor: C,
+    ) -> impl Iterator<Item = (Range<usize>, &'a PatternContext)> + 'a {
+        self.patterns.iter().flat_map(move |pattern| {
+            pattern
+                .find_iter_cursor(cursor.clone())
+                .map(|range| (range, &self.context))
         })
     }
 }

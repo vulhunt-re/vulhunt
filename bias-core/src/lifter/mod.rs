@@ -691,9 +691,10 @@ impl<'a> Disassembler<'a> {
         reader: &mut MemoryReader,
     ) -> Result<InsnText, LifterError> {
         let address = address.into();
-        let bytes = reader
-            .bytes_at(address, MAX_INSN_BYTES)
-            .ok_or(LifterError::UnmappedAddress(address))?;
-        self.disassemble(address, bytes.as_contiguous().unwrap_or_default())
+        let mut bytes = [0u8; MAX_INSN_BYTES];
+        let read = reader
+            .read_bytes(address, &mut bytes)
+            .map_err(|_| LifterError::UnmappedAddress(address))?;
+        self.disassemble(address, &bytes[..read])
     }
 }
