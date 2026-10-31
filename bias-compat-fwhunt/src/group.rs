@@ -337,6 +337,8 @@ where
 
 #[cfg(test)]
 mod test {
+    use serde_yaml::SerializerOptions;
+
     use super::*;
 
     #[test]
@@ -445,9 +447,21 @@ and:
             },
         ]);
 
-        assert_eq!(map1_s.trim(), serde_yaml::to_string(&map1)?.trim());
-        assert_eq!(map2_s.trim(), serde_yaml::to_string(&map2)?.trim());
-        assert_eq!(map3_s.trim(), serde_yaml::to_string(&map3)?.trim());
+        let mut options = SerializerOptions::default();
+        options.compact_list_indent = false;
+
+        assert_eq!(
+            map1_s.trim(),
+            serde_yaml::to_string_with_options(&map1, options.clone())?.trim()
+        );
+        assert_eq!(
+            map2_s.trim(),
+            serde_yaml::to_string_with_options(&map2, options.clone())?.trim()
+        );
+        assert_eq!(
+            map3_s.trim(),
+            serde_yaml::to_string_with_options(&map3, options)?.trim()
+        );
 
         Ok(())
     }

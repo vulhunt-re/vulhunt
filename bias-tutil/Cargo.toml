@@ -31,7 +31,7 @@ anyhow = "1"
 bias-core = { version = "1.0", path = "../bias-core", features = ["import-c"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
-serde_yaml = { version = "0.0.17", package = "serde-saphyr" }
+serde_yaml = { version = "2.0", package = "serde-saphyr" }
 tracing = { version = "0.1", features = ["release_max_level_warn"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2"

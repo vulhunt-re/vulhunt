@@ -28,7 +28,7 @@ tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_with = "3"
-serde_yaml = { version = "0.0.17", package = "serde-saphyr" }
+serde_yaml = { version = "2.0", package = "serde-saphyr" }
 thiserror = "2"
 uuid = { version = "1.1", features = ["serde"] }
 walkdir = "2"

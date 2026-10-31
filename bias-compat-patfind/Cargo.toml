@@ -23,7 +23,7 @@ fugue-bytes = { git = "https://github.com/fugue-re/fugue-core-next.git", rev = "
 nom = "7"
 regex = "1"
 serde = "1"
-serde_yaml = { version = "0.0.17", package = "serde-saphyr" }
+serde_yaml = { version = "2.0", package = "serde-saphyr" }
 thiserror = "1"
 
 [lints]
