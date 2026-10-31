@@ -20,7 +20,7 @@ use crate::lifter::Lifter;
 use crate::loader::{
     ExternalsProvider, ExternalsProviderError, HasExternals, LoadedBinary, Loader,
 };
-use crate::region::{Memory, Region, RegionIOError};
+use crate::region::{Memory, MemoryError, RegionIOError};
 use crate::symbols::{SymbolTable, Symbolise, SymboliseError};
 
 pub mod analysis;
@@ -40,6 +40,8 @@ where
     Loader(L),
     #[error("control-flow reconstruction failed: {0}")]
     ICFG(RegionIOError),
+    #[error("failed to map binary into memory: {0}")]
+    Memory(#[from] MemoryError),
 }
 
 pub type ProjectError<L> = Error<L>;
@@ -173,36 +175,18 @@ impl<'a> ProjectContextMut<'a> {
 }
 
 impl Project {
-    pub fn new<T>(binary: &T, lifter: Lifter) -> Self
+    pub fn new<T>(binary: &T, lifter: Lifter) -> Result<Self, MemoryError>
     where
         T: LoadedBinary + ?Sized,
     {
         Self::new_with(binary, lifter, ProjectConfig::default())
     }
 
-    pub fn new_with<'a, T, C>(binary: &T, lifter: Lifter, config: C) -> Self
+    pub fn new_with<'a, T, C>(binary: &T, lifter: Lifter, config: C) -> Result<Self, MemoryError>
     where
         T: LoadedBinary + ?Sized,
         C: AsRef<ProjectConfig<'a>>,
     {
-        let mut memory = Memory::new();
-
-        binary.for_each_region(|r| {
-            let region = Region::new_with(
-                r.name.as_deref().unwrap_or("unnamed"),
-                r.bounds.start,
-                r.uninitialised.clone(),
-                r.endian,
-                r.code,
-                r.read_only,
-                &*r.bytes,
-            );
-
-            tracing::trace!("mapping region: {}", region);
-
-            memory.add_region(region);
-        });
-
         let mut slf = Self {
             id: Uuid::new_v4(),
             icfg: Default::default(),
@@ -214,7 +198,7 @@ impl Project {
             entry: binary.entry_point(),
             datadb: DataTypeDB::new(&lifter),
             lifter,
-            memory,
+            memory: Memory::new(binary)?,
             typedb: Default::default(),
             manager: Default::default(),
             injections: Default::default(),
@@ -222,32 +206,14 @@ impl Project {
 
         slf.build_icfg(binary, config.as_ref());
 
-        slf
+        Ok(slf)
     }
 
-    pub fn new_empty<T>(binary: &T, lifter: Lifter) -> Self
+    pub fn new_empty<T>(binary: &T, lifter: Lifter) -> Result<Self, MemoryError>
     where
         T: LoadedBinary,
     {
-        let mut memory = Memory::new();
-
-        binary.for_each_region(|r| {
-            let region = Region::new_with(
-                r.name.as_deref().unwrap_or("unnamed"),
-                r.bounds.start,
-                r.uninitialised.clone(),
-                r.endian,
-                r.code,
-                r.read_only,
-                &*r.bytes,
-            );
-
-            tracing::trace!("mapping region: {}", region);
-
-            memory.add_region(region);
-        });
-
-        Self {
+        Ok(Self {
             id: Uuid::new_v4(),
             icfg: Default::default(),
             itable: Default::default(),
@@ -258,11 +224,11 @@ impl Project {
             entry: binary.entry_point(),
             datadb: DataTypeDB::new(&lifter),
             lifter,
-            memory,
+            memory: Memory::new(binary)?,
             typedb: Default::default(),
             manager: Default::default(),
             injections: Default::default(),
-        }
+        })
     }
 
     pub fn from_file<L, P>(loader: L, path: P) -> Result<Self, Error<L::Error>>
@@ -273,7 +239,7 @@ impl Project {
         let path = path.as_ref();
         let (lifter, binary) = loader.load_file(path).map_err(Error::Loader)?;
 
-        Ok(Self::new(&binary, lifter))
+        Ok(Self::new(&binary, lifter)?)
     }
 
     pub fn from_file_with<'a, L, P, C>(
@@ -289,7 +255,7 @@ impl Project {
         let path = path.as_ref();
         let (lifter, binary) = loader.load_file(path).map_err(Error::Loader)?;
 
-        Ok(Self::new_with(&binary, lifter, config))
+        Ok(Self::new_with(&binary, lifter, config)?)
     }
 
     #[inline(always)]
@@ -408,10 +374,6 @@ impl Project {
 
     pub fn memory(&self) -> &Memory {
         &self.memory
-    }
-
-    pub fn memory_mut(&mut self) -> &mut Memory {
-        &mut self.memory
     }
 
     pub fn data_db(&self) -> &DataTypeDB {

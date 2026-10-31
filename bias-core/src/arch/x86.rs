@@ -7,7 +7,6 @@ use super::{register_var, AddressRangeSet, Arch, ErasedArch, Flag, FunctionThunk
 use crate::ir::{Address, Expr, Term, Var};
 use crate::kb::{uuid, Lazy, Uuid};
 use crate::lifter::Lifter;
-use crate::region::Region;
 
 #[derive(Copy, Clone, Default)]
 #[repr(transparent)]
@@ -136,17 +135,16 @@ impl Arch for X86 {
         &self,
         lifter: &Lifter,
         _ctx: &mut LiftingContext,
-        segment: &Region,
+        start: Address,
+        bytes: &[u8],
         mut f: F,
     ) where
         Self: Sized,
         F: FnMut(Address),
     {
-        if let Some(matches) =
-            <Self as Arch>::function_start_patterns(self, &lifter, segment.bytes())
-        {
+        if let Some(matches) = <Self as Arch>::function_start_patterns(self, lifter, bytes) {
             for (range, _context, _confidence) in matches {
-                let addr = *segment.address() + range.start;
+                let addr = start + range.start;
                 f(addr);
             }
         }

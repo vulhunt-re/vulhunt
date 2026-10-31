@@ -19,7 +19,7 @@ license = "MIT OR Apache-2.0"
 readme = "../README.BIAS.md"
 
 [dependencies]
-fugue-bytes = { git = "https://github.com/fugue-re/fugue-core-next.git", rev = "bb92dec3dcdf0122d9264c64f8cd3d93e587d9d1" }
+fugue-bytes = { git = "https://github.com/fugue-re/fugue-core-next.git", rev = "c708549a2f0f3de67cd944cf81628088197c07cc" }
 nom = "7"
 regex = "1"
 serde = "1"

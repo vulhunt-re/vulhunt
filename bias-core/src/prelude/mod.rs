@@ -71,7 +71,7 @@ pub use crate::project::analysis::{
 };
 pub use crate::project::io::{AnalysisStore, ProjectData};
 pub use crate::project::{ICFGConfig, Project, ProjectConfig, ProjectContext, ProjectContextMut};
-pub use crate::region::{Memory, Region, RegionIOError};
+pub use crate::region::{Memory, MemoryError, MemoryReader, Region, RegionIOError};
 pub use crate::symbols::{SymbolTable, Symbolise, SymboliseError};
 
 pub mod eval {

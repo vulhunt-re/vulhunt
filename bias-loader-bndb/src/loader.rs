@@ -62,7 +62,7 @@ impl PlatformComponentGuidedBinaryLoader for BNDBBinaryLoader {
         let is_arm = matches!(arch.id(), bias_core::arch::arm::ARCH_ARM);
         let address_size = lifter.address_bytes();
 
-        let mut project = Project::new_empty(binary, lifter);
+        let mut project = Project::new_empty(binary, lifter).map_err(PlatformError::project)?;
         let mut guide = GuidedICFGBuilder::new(&mut project);
 
         for func in view.functions().iter() {

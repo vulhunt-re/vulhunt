@@ -1588,21 +1588,7 @@ where
                     .next_element::<InjectionManager>()?
                     .ok_or_else(|| de::Error::invalid_length(13, &self))?;
 
-                let mut memory = Memory::new();
-
-                self.0.binary.for_each_region(|r| {
-                    let region = Region::new_with(
-                        r.name.as_deref().unwrap_or("unnamed"),
-                        r.bounds.start,
-                        r.uninitialised.clone(),
-                        r.endian,
-                        r.code,
-                        r.read_only,
-                        &*r.bytes,
-                    );
-
-                    memory.add_region(region);
-                });
+                let memory = Memory::new(self.0.binary).map_err(de::Error::custom)?;
 
                 let lifter = lifter_data
                     .merge(self.0.lifter)
@@ -1761,21 +1747,7 @@ where
                 let injections =
                     injections.ok_or_else(|| de::Error::missing_field("injections"))?;
 
-                let mut memory = Memory::new();
-
-                self.0.binary.for_each_region(|r| {
-                    let region = Region::new_with(
-                        r.name.as_deref().unwrap_or("unnamed"),
-                        r.bounds.start,
-                        r.uninitialised.clone(),
-                        r.endian,
-                        r.code,
-                        r.read_only,
-                        &*r.bytes,
-                    );
-
-                    memory.add_region(region);
-                });
+                let memory = Memory::new(self.0.binary).map_err(de::Error::custom)?;
 
                 let lifter = lifter_data
                     .merge(self.0.lifter)

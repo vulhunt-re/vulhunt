@@ -7,6 +7,8 @@ use std::ops::{Deref, DerefMut};
 
 use ahash::{AHashMap, AHashSet};
 use fixedbitset::FixedBitSet;
+use fugue::core::storage::SegmentView;
+use fugue::lifter::runtime::input::MAX_INSN_BYTES;
 use fugue::lifter::runtime::pcode::{LiftingContext, PCodeOp};
 use fugue::specs::FunctionSpecs;
 use iset::IntervalSet;
@@ -44,7 +46,7 @@ use crate::lifter::{Lifter, LifterError};
 use crate::loader::LoadedBinary;
 use crate::project::analysis::AnalysisManager;
 use crate::project::ProjectContext;
-use crate::region::{Memory, Region};
+use crate::region::{Memory, MemoryReader, Region};
 use crate::symbols::SymbolTable;
 use crate::Project;
 
@@ -652,6 +654,7 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
         operations: &mut Vec<PCodeOp>,
         cache: &mut StmtCache,
         cfg: &mut Self,
+        reader: &mut MemoryReader<'_>,
         wl: &mut VecDeque<Address>,
         xrefs: &mut Vec<XRef>,
         xref_properties: &mut BTreeMap<Address, PointerProvenance>,
@@ -736,7 +739,11 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
                                     let shift = cfg.context.lifter.language().address_size();
                                     let bits = shift as u32 * 8;
 
-                                    while let Ok(p) = r.read_pointer(position, bits) {
+                                    while r.contains(position) {
+                                        let Ok(p) = reader.read_pointer(position, bits) else {
+                                            break;
+                                        };
+
                                         if current_region.bounds().contains(&p) {
                                             xref_properties
                                                 .entry(p)
@@ -791,6 +798,7 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
         let mut xref_properties = BTreeMap::new();
         let mut func_starts_by_pattern = BTreeSet::new();
         let mut failures = SetU64::new();
+        let mut reader = self.context.memory.reader();
 
         for segment in segments.iter() {
             tracing::trace!(
@@ -832,11 +840,17 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
                 wl.push_back(entry);
             }
 
+            let segment_view = reader.bytes_from(*segment.address());
+            let segment_bytes = segment_view
+                .as_ref()
+                .and_then(SegmentView::as_contiguous)
+                .unwrap_or_default();
+
             let avoids = if self.config.avoid_invalid_or_nonsense_ranges {
                 self.context
                     .lifter
                     .arch()
-                    .invalid_or_nonsense_ranges(start, segment.bytes())
+                    .invalid_or_nonsense_ranges(start, segment_bytes)
             } else {
                 Default::default()
             };
@@ -845,7 +859,8 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
                 self.context.lifter.arch().for_each_function_by_pattern(
                     &self.context.lifter,
                     ctx,
-                    &segment,
+                    *segment.address(),
+                    segment_bytes,
                     &mut |addr| {
                         wl.push_back(addr);
                         func_starts_by_pattern.insert(addr);
@@ -878,30 +893,44 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
                     continue;
                 }
 
-                let view = match segment.view_bytes_from(nstart) {
-                    Ok(view) => view,
-                    Err(_) => {
-                        continue; // skip failures
-                    }
-                };
+                if !segment.contains(nstart) {
+                    continue;
+                }
+
+                let view = reader.bytes_from(nstart);
+                let run = view
+                    .as_ref()
+                    .and_then(SegmentView::as_contiguous)
+                    .unwrap_or_default();
+                let remaining = usize::from(segment.bounds().end - nstart);
+                let mut insn_bytes = [0u8; MAX_INSN_BYTES];
 
                 let mut offset = 0;
                 let mut address = nstart;
                 //let mut last_padding = false;
 
                 // 1.1. sweep until we encounter an instruction that does not fall
-                while offset < view.len() {
+                while offset < remaining {
+                    let bytes = match run.get(offset..) {
+                        Some(bytes) if bytes.len() >= MAX_INSN_BYTES => bytes,
+                        _ => {
+                            let read = reader.read_bytes(address, &mut insn_bytes).unwrap_or(0);
+                            &insn_bytes[..read]
+                        }
+                    };
+
                     let res = Self::update(
                         ctx,
                         &mut operations,
                         &mut cache,
                         self,
+                        &mut reader,
                         &mut wl,
                         &mut xrefs,
                         &mut xref_properties,
                         &address,
                         segment,
-                        &view[offset..],
+                        bytes,
                         &avoids,
                     );
 
@@ -1008,10 +1037,9 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
                                 xref.source()
                             );
 
-                            let r = self.context.memory.find_region(&xref.target()).unwrap();
-                            if let Ok(p) = r.read_pointer(xref.target(), bits) {
-                                if let Some(rp) = self.context.memory.find_region(p) {
-                                    let dt = data.identify_data_via(self.context.memory, rp, p);
+                            if let Ok(p) = reader.read_pointer(xref.target(), bits) {
+                                if self.context.memory.contains(p) {
+                                    let dt = data.identify_data_via(self.context.memory, &mut reader, p);
                                     let prov = PointerProvenance::from(dt);
 
                                     *xref_properties.entry(xref.target()).or_insert(prov) |= prov;
@@ -1027,14 +1055,18 @@ impl<'a, 'b> ICFGBuilder<'a, 'b> {
                             let mut position = xref.target();
                             let mut counter = 0usize;
 
-                            while let Ok(p) = r.read_pointer(position, bits) {
+                            while r.contains(position) {
+                                let Ok(p) = reader.read_pointer(position, bits) else {
+                                    break;
+                                };
+
                                 if counter >= self.config.mark_xrefs_table_limit {
                                     break;
                                 }
 
                                 if let Some(tinfo) = self.context.itable.insn(p) {
                                     let dt =
-                                        data.identify_data_via(self.context.memory, r, position);
+                                        data.identify_data_via(self.context.memory, &mut reader, position);
                                     if let Some(d) = dt.as_ref() {
                                         tracing::trace!("potential indirect code pointer via {} at {position} (data: {d})", tinfo.address());
                                     }

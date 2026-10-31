@@ -7,6 +7,7 @@ use std::fmt::Display;
 use std::mem;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Deref, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 
+use fugue::core::storage::SegmentView;
 use itertools::Itertools;
 use petgraph::visit::{EdgeRef, IntoEdgesDirected, VisitMap, Visitable};
 use petgraph::EdgeDirection;
@@ -1496,13 +1497,13 @@ impl<'a> AliasTypingContext<'a> {
 
     pub fn with_bytes<U, F>(&self, from: &AliasValue, mut f: F) -> Option<U>
     where
-        F: FnMut(&[u8]) -> U,
+        F: FnMut(&SegmentView) -> U,
     {
         match from {
             AliasValue::V(bv) => {
                 if let Some(addr) = bv.to_address() {
-                    let bytes = self.memory.view_bytes_from(addr).ok()?;
-                    Some(f(bytes))
+                    let view = self.memory.reader().bytes_from(addr)?;
+                    Some(f(&view))
                 } else {
                     None
                 }
@@ -1525,7 +1526,8 @@ impl<'a> AliasTypingContext<'a> {
                     let (start, bytes) = &constants[i];
                     let offset = (d - start) as usize;
 
-                    Some(f(&bytes[offset..]))
+                    let view = SegmentView::contiguous(&bytes[offset..]);
+                    Some(f(&view))
                 } else {
                     None
                 }

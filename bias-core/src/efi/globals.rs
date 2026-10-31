@@ -345,7 +345,8 @@ impl Observer for ObserveSmst {
             ];
 
             if let Some(addr) = context.read_var(&guid_var).to_address() {
-                if !matches!(context.read_bytes(addr, guid.len()), Ok(bytes) if bytes == guid) {
+                let mut bytes = [0u8; 16];
+                if context.read_bytes(addr, &mut bytes).is_err() || bytes != guid {
                     return Ok(());
                 }
                 tracing::info!("matched SMM BASE2 GUID at {addr}");

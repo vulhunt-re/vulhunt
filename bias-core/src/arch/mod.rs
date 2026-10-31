@@ -35,7 +35,6 @@ use crate::kb::function::{Function, FunctionId};
 use crate::kb::id::Identifiable;
 use crate::kb::{uuid, Uuid};
 use crate::lifter::Lifter;
-use crate::region::Region;
 
 pub mod aarch64;
 pub mod arm;
@@ -678,7 +677,8 @@ pub trait Arch: Send + Sync {
         &self,
         lifter: &Lifter,
         ctx: &mut LiftingContext,
-        segment: &Region,
+        start: Address,
+        bytes: &[u8],
         f: F,
     ) where
         F: FnMut(Address),
@@ -756,7 +756,8 @@ pub trait ErasedArch: DynClone + Send + Sync {
         &self,
         lifter: &Lifter,
         ctx: &mut LiftingContext,
-        segment: &Region,
+        start: Address,
+        bytes: &[u8],
         f: &mut dyn FnMut(Address),
     );
 }
@@ -871,12 +872,13 @@ where
         &self,
         lifter: &Lifter,
         ctx: &mut LiftingContext,
-        segment: &Region,
+        start: Address,
+        bytes: &[u8],
         mut f: F,
     ) where
         F: FnMut(Address),
     {
-        <T as Arch>::for_each_function_by_pattern(&self, lifter, ctx, segment, &mut f);
+        <T as Arch>::for_each_function_by_pattern(&self, lifter, ctx, start, bytes, &mut f);
     }
 }
 
@@ -986,12 +988,13 @@ impl Arch for dyn ErasedArch {
         &self,
         lifter: &Lifter,
         ctx: &mut LiftingContext,
-        segment: &Region,
+        start: Address,
+        bytes: &[u8],
         mut f: F,
     ) where
         F: FnMut(Address),
     {
-        Self::for_each_function_by_pattern(&*self, lifter, ctx, segment, &mut f);
+        Self::for_each_function_by_pattern(&*self, lifter, ctx, start, bytes, &mut f);
     }
 }
 
@@ -1104,10 +1107,11 @@ where
         &self,
         lifter: &Lifter,
         ctx: &mut LiftingContext,
-        segment: &Region,
+        start: Address,
+        bytes: &[u8],
         f: &mut dyn FnMut(Address),
     ) {
-        <T as Arch>::for_each_function_by_pattern(&self, lifter, ctx, segment, f);
+        <T as Arch>::for_each_function_by_pattern(&self, lifter, ctx, start, bytes, f);
     }
 }
 

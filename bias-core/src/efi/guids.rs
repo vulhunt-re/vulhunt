@@ -279,14 +279,13 @@ impl Analysis for GuidAnalyser {
 
         tracing::trace!("analysing GUID xrefs");
 
+        let mut reader = project.memory().reader();
+        let mut bytes = [0u8; GUID_LEN];
+
         for (id, xref) in xrefs.iter().filter(|(_, xref)| xref.kind().is_load()) {
             let target = xref.target();
-            if let Some(bytes) = project
-                .memory()
-                .find_region(&target)
-                .and_then(|r| r.view_bytes(&target, GUID_LEN).ok())
-            {
-                if let Some(idx) = self.db.index(bytes) {
+            if reader.read_bytes_exact(target, &mut bytes).is_ok() {
+                if let Some(idx) = self.db.index(&bytes) {
                     tracing::trace!(
                         "found xref at {} from {} / {}",
                         target,

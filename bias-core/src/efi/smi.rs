@@ -219,9 +219,10 @@ impl Observer for ObserveSmst {
             ];
 
             if let Some(addr) = context.read_var(&guid_var).to_address() {
-                let Ok(bytes) = context.read_bytes(addr, GUID_LEN) else {
+                let mut bytes = [0u8; GUID_LEN];
+                if context.read_bytes(addr, &mut bytes).is_err() {
                     return Ok(());
-                };
+                }
 
                 let interface = if bytes == base2_guid {
                     tracing::info!("matched SMM BASE2 GUID at {addr}");
@@ -430,8 +431,9 @@ impl Observer for ObserveSmstCall {
             let return_loc = self.default_proto.resolved_output(0, stack_base).unwrap();
 
             if let Some(dispatch) = context.read_var(&dispatch_guid).to_address() {
-                if let Ok(bytes) = context.read_bytes(dispatch, GUID_LEN) {
-                    if let Some(guid) = self.guid_db.get(bytes) {
+                let mut bytes = [0u8; GUID_LEN];
+                if context.read_bytes(dispatch, &mut bytes).is_ok() {
+                    if let Some(guid) = self.guid_db.get(&bytes) {
                         tracing::info!("SMI dispatch protocol found at {dispatch} for {guid}");
                     } else {
                         tracing::info!("SMI dispatch protocol found at {dispatch}");

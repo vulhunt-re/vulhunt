@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::eval::state::paged::{self, PagedState};
 use crate::eval::state::register::{self, RegisterState};
-use crate::eval::state::traits::{State, StateOps, StateValue};
+use crate::eval::state::traits::{State, StateOps};
 use crate::eval::state::unique::{self, UniqueState};
 use crate::ir::Address;
 
@@ -76,17 +76,17 @@ impl PointerSize {
 }
 
 #[derive(Clone)]
-pub struct PCodeState<T: StateValue, O: ByteOrder> {
-    memory: PagedState<T>,
-    registers: RegisterState<T>,
-    temporaries: UniqueState<T>,
+pub struct PCodeState<O: ByteOrder> {
+    memory: PagedState,
+    registers: RegisterState,
+    temporaries: UniqueState,
     language: &'static Language,
     marker: PhantomData<O>,
 }
 
-impl<T: StateValue, O: ByteOrder> PCodeState<T, O> {
+impl<O: ByteOrder> PCodeState<O> {
     pub fn new(
-        memory: PagedState<T>,
+        memory: PagedState,
         language: &'static Language,
         convention: &'static Convention,
     ) -> Self {
@@ -115,32 +115,30 @@ impl<T: StateValue, O: ByteOrder> PCodeState<T, O> {
         self.language.space_id(self.language.register_space())
     }
 
-    pub fn memory(&self) -> &PagedState<T> {
+    pub fn memory(&self) -> &PagedState {
         &self.memory
     }
 
-    pub fn memory_mut(&mut self) -> &mut PagedState<T> {
+    pub fn memory_mut(&mut self) -> &mut PagedState {
         &mut self.memory
     }
 
-    pub fn registers(&self) -> &RegisterState<T> {
+    pub fn registers(&self) -> &RegisterState {
         &self.registers
     }
 
-    pub fn registers_mut(&mut self) -> &mut RegisterState<T> {
+    pub fn registers_mut(&mut self) -> &mut RegisterState {
         &mut self.registers
     }
 
-    pub fn temporaries(&self) -> &UniqueState<T> {
+    pub fn temporaries(&self) -> &UniqueState {
         &self.temporaries
     }
 
-    pub fn temporaries_mut(&mut self) -> &mut UniqueState<T> {
+    pub fn temporaries_mut(&mut self) -> &mut UniqueState {
         &mut self.temporaries
     }
-}
 
-impl<O: ByteOrder> PCodeState<u8, O> {
     pub fn program_counter_value(&self) -> Result<Address, Error> {
         self.get_register_address(self.registers.program_counter())
     }
@@ -152,9 +150,10 @@ impl<O: ByteOrder> PCodeState<u8, O> {
     pub fn get_pointer(&self, address: Address) -> Result<Address, Error> {
         let size = self.address_size();
         let pointer = PointerSize::new(size)?;
-        let values = self
-            .memory
-            .view_values(address, size)
+        let mut values = [0u8; 8];
+        let values = &mut values[..size];
+        self.memory
+            .read_values(address, values)
             .map_err(Error::Memory)?;
 
         Ok(self.wrap_address(pointer.read::<O>(values)))
@@ -200,17 +199,11 @@ impl<O: ByteOrder> PCodeState<u8, O> {
     }
 }
 
-impl<V: StateValue, O: ByteOrder> State for PCodeState<V, O> {
+impl<O: ByteOrder> State for PCodeState<O> {
     type Error = Error;
 
     fn fork(&self) -> Self {
-        Self {
-            memory: self.memory.fork(),
-            registers: self.registers.fork(),
-            temporaries: self.temporaries.fork(),
-            language: self.language,
-            marker: self.marker,
-        }
+        self.clone()
     }
 
     fn restore(&mut self, other: &Self) {

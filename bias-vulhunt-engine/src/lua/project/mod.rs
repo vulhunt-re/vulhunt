@@ -1047,15 +1047,20 @@ where
 
                 let matcher = BMatcher::from_str(&value).map_err(Error::external)?;
                 let mut index = 1usize;
+                let mut reader = this.project().memory().reader();
                 for (_, region) in this.project().memory().regions().iter(..) {
-                    let bytes = region.bytes();
-                    let base = *region.address();
-                    let mut offset = 0usize;
-                    while let Some(found) = matcher.position_from(bytes, offset) {
-                        let addr = base + found;
-                        table.raw_set(index, lua.create_ser_userdata(AddressValue::from(addr))?)?;
-                        index += 1;
-                        offset = found + 1;
+                    let Some(view) = reader.bytes_from(*region.address()) else {
+                        continue;
+                    };
+                    for chunk in view.chunks() {
+                        let base = *region.address() + chunk.offset();
+                        let mut offset = 0usize;
+                        while let Some(found) = matcher.position_from(chunk.bytes(), offset) {
+                            let addr = base + found;
+                            table.raw_set(index, lua.create_ser_userdata(AddressValue::from(addr))?)?;
+                            index += 1;
+                            offset = found + 1;
+                        }
                     }
                 }
 
@@ -1089,15 +1094,20 @@ where
 
                 let matcher = BMatcher::from(needle);
                 let mut index = 1usize;
+                let mut reader = this.project().memory().reader();
                 for (_, region) in this.project().memory().regions().iter(..) {
-                    let bytes = region.bytes();
-                    let base = *region.address();
-                    let mut offset = 0usize;
-                    while let Some(found) = matcher.position_from(bytes, offset) {
-                        let addr = base + found;
-                        table.raw_set(index, lua.create_ser_userdata(AddressValue::from(addr))?)?;
-                        index += 1;
-                        offset = found + 1;
+                    let Some(view) = reader.bytes_from(*region.address()) else {
+                        continue;
+                    };
+                    for chunk in view.chunks() {
+                        let base = *region.address() + chunk.offset();
+                        let mut offset = 0usize;
+                        while let Some(found) = matcher.position_from(chunk.bytes(), offset) {
+                            let addr = base + found;
+                            table.raw_set(index, lua.create_ser_userdata(AddressValue::from(addr))?)?;
+                            index += 1;
+                            offset = found + 1;
+                        }
                     }
                 }
 

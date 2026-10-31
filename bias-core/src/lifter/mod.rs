@@ -13,6 +13,7 @@ use fugue::lifter::dynamic::{Language as DynamicLanguage, LanguageBuildError};
 use fugue::lifter::runtime::convention::{
     CallFixup, Convention, Prototype, PrototypeEntry, PrototypeOperand, ReturnAddress,
 };
+use fugue::lifter::runtime::input::MAX_INSN_BYTES;
 use fugue::lifter::runtime::language::{Language, LanguageId, LanguageParseError};
 use fugue::lifter::runtime::ContextDatabase;
 use fugue::lifter::{LanguageLoadError, LiftingContext};
@@ -26,7 +27,7 @@ use crate::arch::{DefaultArch, ErasedArch};
 use crate::ir::insn::{Insn, InsnText};
 use crate::ir::{Address, BitSize, FloatKind, Var, VarView};
 use crate::kb::operand::Operand;
-use crate::region::Memory;
+use crate::region::MemoryReader;
 
 #[derive(Clone)]
 pub struct LifterBuilder {
@@ -687,12 +688,12 @@ impl<'a> Disassembler<'a> {
     pub fn disassemble_at(
         &mut self,
         address: impl Into<Address>,
-        memory: &Memory,
+        reader: &mut MemoryReader,
     ) -> Result<InsnText, LifterError> {
         let address = address.into();
-        let Ok(bytes) = memory.view_bytes_from(address) else {
-            return Err(LifterError::UnmappedAddress(address));
-        };
-        self.disassemble(address, bytes)
+        let bytes = reader
+            .bytes_at(address, MAX_INSN_BYTES)
+            .ok_or(LifterError::UnmappedAddress(address))?;
+        self.disassemble(address, bytes.as_contiguous().unwrap_or_default())
     }
 }

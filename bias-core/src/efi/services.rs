@@ -482,10 +482,11 @@ impl ServiceDataResolver {
         context: &Box<dyn IRContext>,
         addr: Address,
     ) -> Option<ServiceData> {
+        let mut buf = [0u8; 128];
         if let Some(varn) = context
-            .read_bytes(addr, 128)
+            .read_bytes(addr, &mut buf)
             .ok()
-            .and_then(|buf| StringData::Utf16Le.decode(buf).ok())
+            .and_then(|_| StringData::Utf16Le.decode(&buf).ok())
         {
             Some(ServiceData::VariableName(varn.into()))
         } else {
@@ -494,11 +495,12 @@ impl ServiceDataResolver {
     }
 
     fn resolve_guid(&self, context: &Box<dyn IRContext>, addr: Address) -> Option<Ustr> {
-        if let Ok(bytes) = context.read_bytes(addr, GUID_LEN) {
-            let service_data = if let Some(guid) = self.guid_db.get(bytes) {
+        let mut bytes = [0u8; GUID_LEN];
+        if context.read_bytes(addr, &mut bytes).is_ok() {
+            let service_data = if let Some(guid) = self.guid_db.get(&bytes) {
                 guid.into()
             } else {
-                let guid = Uuid::from_bytes_le(bytes.try_into().unwrap());
+                let guid = Uuid::from_bytes_le(bytes);
                 guid.hyphenated().to_string().into()
             };
             Some(service_data)

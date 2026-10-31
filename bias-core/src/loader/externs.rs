@@ -8,6 +8,7 @@ use crate::kb::Ustr;
 use crate::lifter::Lifter;
 use crate::project::analysis::AnalysisError;
 use crate::project::Project;
+use crate::region::MemoryError;
 use crate::symbols::{Symbolise, SymboliseError};
 
 #[derive(Debug, Error)]
@@ -20,6 +21,8 @@ pub enum ExternalsProviderError {
     IncompatibleConvention,
     #[error("target project memory mapping has insufficient space to map externals")]
     InsufficientSpace,
+    #[error(transparent)]
+    Memory(#[from] MemoryError),
     #[error(transparent)]
     Rebase(#[from] RelocationError),
     #[error(transparent)]
@@ -98,17 +101,14 @@ pub trait ExternalsProvider: LoadedBinary + RelocatableBinary + Symbolise + Size
         tracing::trace!("rebasing provider to use {source_base} as its base address");
         self.rebase(source_base)?;
 
-        let mut source = Project::new(&self, lifter);
+        let mut source = Project::new(&self, lifter)?;
 
         tracing::trace!("applying symbol information from provider");
         source.load_symbols(&self)?;
 
         // merge memory mappings
         tracing::trace!("merging memory maps");
-        source
-            .memory
-            .into_iter()
-            .for_each(|(_, r)| target.memory.add_region(r));
+        target.memory.map_binary(&self)?;
 
         // merge instruction tables
         tracing::trace!("merging instruction tables");

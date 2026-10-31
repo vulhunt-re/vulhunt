@@ -210,45 +210,17 @@ impl<'a> DecompilerProjectRef<'a> {
         }
 
         let memory = self.memory.expect("valid state");
+        let address = Address::from(address);
 
-        let region = memory
-            .find_region(Address::from(address))
-            .ok_or_else(|| DecompilerError::Ffi("invalid address range"))?;
-
-        if let Some(bytes) = region.view_bytes(Address::from(address), size).ok() {
-            // fast path
-
-            let into = unsafe { std::slice::from_raw_parts_mut(into, size) };
-            into.copy_from_slice(bytes);
-
-            return Ok(());
+        if !memory.contains(address) {
+            return Err(DecompilerError::Ffi("invalid address range"));
         }
 
-        // could not read contiguous region; get region containing second part
-        let end_address = Address::from(address) + size;
-
-        if let Some(region_rest) = memory.find_region(end_address) {
-            let into = unsafe { std::slice::from_raw_parts_mut(into, size) };
-
-            let first = region.view_bytes_from(Address::from(address)).unwrap();
-            into[..first.len()].copy_from_slice(first);
-            into[first.len()..].fill(0);
-
-            let second_range = usize::from(end_address - region_rest.address());
-            if second_range != 0 {
-                let second = region_rest
-                    .view_bytes(region_rest.address(), second_range)
-                    .unwrap();
-                into[size - second_range..].copy_from_slice(second);
-            }
-        } else {
-            // no second part that overlaps; copy what we can
-            let rest = region.view_bytes_from(Address::from(address)).unwrap();
-            let into = unsafe { std::slice::from_raw_parts_mut(into, size) };
-
-            into[..rest.len()].copy_from_slice(rest);
-            into[rest.len()..].fill(0);
-        }
+        let into = unsafe { std::slice::from_raw_parts_mut(into, size) };
+        memory
+            .segments()
+            .read_bytes(address, into)
+            .map_err(|_| DecompilerError::Ffi("invalid address range"))?;
 
         Ok(())
     }

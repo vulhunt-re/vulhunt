@@ -5,6 +5,7 @@ use bias_core::ir::Address;
 use bias_core::kb::function::Function;
 use bias_core::kb::id::Identifiable;
 use bias_core::project::ProjectContext;
+use bias_core::fugue::core::storage::SegmentView;
 use bias_core::Project;
 
 use crate::bmatch::BMatcher;
@@ -437,22 +438,24 @@ impl Code {
         }
     }
 
-    fn function_bytes<'a, C>(project: C, function: &Function) -> impl Iterator<Item = &'a [u8]>
+    fn function_bytes<'a, C>(
+        project: C,
+        function: &Function,
+    ) -> impl Iterator<Item = SegmentView<'a>>
     where
         C: Into<ProjectContext<'a>>,
     {
         let project = project.into();
+        let mut reader = project.memory.reader();
 
         function
             .chunks(project.cbtable)
             .into_iter()
-            .filter_map(|iv| {
-                let start = iv.start;
-                let last = iv.end;
-                let count = usize::from(last - start);
-
-                let region = project.memory.find_region(start)?;
-                region.view_bytes(start, count).ok()
+            .filter_map(move |iv| {
+                let count = usize::from(iv.end - iv.start);
+                reader
+                    .bytes_at(iv.start, count)
+                    .filter(|bytes| bytes.size() == count as u64)
             })
     }
 
@@ -473,8 +476,8 @@ impl Code {
                 f.address()
             );
 
-            if let Some(offset) =
-                Self::function_bytes(project, f).find_map(|b| self.pattern.position(b))
+            if let Some(offset) = Self::function_bytes(project, f)
+                .find_map(|b| self.pattern.position(b.as_contiguous().unwrap_or_default()))
             {
                 let location = f.address() + offset;
                 tracing::trace!("found {} at {}", self.pattern, location);
@@ -512,8 +515,8 @@ impl Code {
                     self.pattern,
                     f.address()
                 );
-                if let Some(offset) =
-                    Self::function_bytes(project, f).find_map(|b| self.pattern.position(b))
+                if let Some(offset) = Self::function_bytes(project, f)
+                    .find_map(|b| self.pattern.position(b.as_contiguous().unwrap_or_default()))
                 {
                     let location = f.address() + offset;
                     tracing::trace!("found {} at {}", self.pattern, location);

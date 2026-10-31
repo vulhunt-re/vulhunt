@@ -2,7 +2,7 @@ use std::mem::size_of;
 
 use thiserror::Error;
 
-use crate::eval::state::traits::{State, StateOps, StateValue};
+use crate::eval::state::traits::{State, StateOps};
 use crate::ir::Address;
 
 #[derive(Debug, Error)]
@@ -24,20 +24,15 @@ impl Error {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct FlatState<T: StateValue> {
-    backing: Vec<T>,
+pub struct FlatState {
+    backing: Vec<u8>,
     dirty: DirtyBacking,
 }
 
-impl<T: StateValue> FlatState<T> {
+impl FlatState {
     pub fn new(size: usize) -> Self {
-        Self::from_vec(vec![T::default(); size])
-    }
-
-    pub fn from_vec(values: Vec<T>) -> Self {
-        let size = values.len();
         Self {
-            backing: values,
+            backing: vec![0; size],
             dirty: DirtyBacking::new(size),
         }
     }
@@ -50,7 +45,7 @@ impl<T: StateValue> FlatState<T> {
     }
 }
 
-impl<V: StateValue> State for FlatState<V> {
+impl State for FlatState {
     type Error = Error;
 
     fn fork(&self) -> Self {
@@ -74,14 +69,12 @@ impl<V: StateValue> State for FlatState<V> {
     }
 }
 
-impl<V: StateValue> StateOps for FlatState<V> {
-    type Value = V;
-
+impl StateOps for FlatState {
     fn len(&self) -> usize {
         self.backing.len()
     }
 
-    fn view_values<A>(&self, address: A, size: usize) -> Result<&[Self::Value], Error>
+    fn view_values<A>(&self, address: A, size: usize) -> Result<&[u8], Error>
     where
         A: Into<Address>,
     {
@@ -93,7 +86,7 @@ impl<V: StateValue> StateOps for FlatState<V> {
         Ok(&self.backing[start..end])
     }
 
-    fn view_values_mut<A>(&mut self, address: A, size: usize) -> Result<&mut [Self::Value], Error>
+    fn view_values_mut<A>(&mut self, address: A, size: usize) -> Result<&mut [u8], Error>
     where
         A: Into<Address>,
     {

@@ -1,6 +1,7 @@
 use std::ops::{Deref, DerefMut, Index, Range};
 
 use ahash::{AHashMap, AHashSet};
+use fugue::core::storage::SegmentView;
 use indexmap::IndexSet;
 use iset::IntervalSet;
 use itertools::Itertools;
@@ -28,7 +29,7 @@ use crate::kb::block::{CodeBlock, CodeBlockId, CodeBlockTable, EmptyOrChunkedCod
 use crate::kb::debug::file_info::SourceFileInfo;
 use crate::kb::id::Identifiable;
 use crate::kb::table::MPointTable;
-use crate::region::Memory;
+use crate::region::MemoryReader;
 use crate::{define_mtable_key, Project};
 
 define_mtable_key!(FunctionId, "A36B28D5-AC14-4B40-9F6E-F1EF4504B9E5");
@@ -1025,20 +1026,23 @@ impl Function {
         })
     }
 
-    pub fn bytes<'a>(&self, code_blocks: &CodeBlockTable, memory: &'a Memory) -> &'a [u8] {
+    pub fn bytes<'a>(
+        &self,
+        code_blocks: &CodeBlockTable,
+        reader: &mut MemoryReader<'a>,
+    ) -> Option<SegmentView<'a>> {
         let start = self.address();
-        let Some(end) = self
+        let end = self
             .blocks()
             .iter()
             .max_by_key(|(_, v)| *v)
-            .map(|(k, _)| code_blocks[*k].next_address())
-        else {
-            return Default::default();
-        };
+            .map(|(k, _)| code_blocks[*k].next_address())?;
 
         let size = usize::from(end - start);
 
-        memory.view_bytes(start, size).unwrap_or_default()
+        reader
+            .bytes_at(start, size)
+            .filter(|bytes| bytes.size() == size as u64)
     }
 
     pub fn entries<'a>(&'a self, project: &'a Project) -> impl Iterator<Item = CodeBlockId> + 'a {

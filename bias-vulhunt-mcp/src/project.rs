@@ -250,6 +250,7 @@ impl ProjectData {
                         .map_err(|e| VulHuntProjectError::loader(path, e))?
                 } else {
                     Project::new_with(component, lifter, analyses.configuration())
+                        .map_err(|e| VulHuntProjectError::loader(path, e))?
                 };
 
                 analyses
@@ -279,6 +280,7 @@ impl ProjectData {
                         .map_err(|e| VulHuntProjectError::loader(path, e))?
                 } else {
                     Project::new_with(component, lifter, analyses.configuration())
+                        .map_err(|e| VulHuntProjectError::loader(path, e))?
                 };
 
                 analyses

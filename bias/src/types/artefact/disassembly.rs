@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::ops::{Bound, Range, RangeBounds};
 
+use bias_core::fugue::lifter::runtime::input::MAX_INSN_BYTES;
 use bias_core::fugue::lifter::LiftingContext;
 use bias_core::prelude::graph::visit::{IntoEdgeReferences, IntoNodeReferences};
 use bias_core::prelude::*;
@@ -289,6 +290,7 @@ impl DisassemblyListing {
         blk: &CodeBlock,
     ) -> DisassemblyBlockId {
         let id = self.blocks.len();
+        let mut reader = project.memory().reader();
 
         self.blocks.push(DisassemblyBlock {
             instructions: blk
@@ -297,10 +299,14 @@ impl DisassemblyListing {
                 .map(|insn| Instruction {
                     address: insn.address,
                     value: {
-                        let bytes = project.memory().view_bytes_from(insn.address()).unwrap();
-                        let insnt =
-                            Insn::disassemble(project.lifter(), context, insn.address(), bytes)
-                                .unwrap();
+                        let view = reader.bytes_at(insn.address(), MAX_INSN_BYTES).unwrap();
+                        let insnt = Insn::disassemble(
+                            project.lifter(),
+                            context,
+                            insn.address(),
+                            view.as_contiguous().unwrap_or_default(),
+                        )
+                        .unwrap();
 
                         if insnt.operands.is_empty() {
                             String::from(&*insnt.mnemonic)

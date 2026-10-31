@@ -311,13 +311,20 @@ impl Display for BMatcher {
 
 impl MatchesRule for BMatcher {
     fn matches_rule(&self, context: &mut MatchContext, project: &Project) -> bool {
+        let mut reader = project.memory().reader();
         project.memory().regions().iter(..).any(|(_, r)| {
             tracing::trace!(
                 "scanning for {self} in region {}-{}",
                 r.bounds().start,
                 r.bounds().end
             );
-            if let Some(found) = self.position(r.bytes()) {
+            let Some(view) = reader.bytes_from(*r.address()) else {
+                return false;
+            };
+            if let Some(found) = view.chunks().iter().find_map(|chunk| {
+                self.position(chunk.bytes())
+                    .map(|found| chunk.offset() as usize + found)
+            }) {
                 let position = *r.address() + found;
 
                 tracing::trace!("found {self} at {}", position);

@@ -1,6 +1,8 @@
 use std::fmt;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
+use fugue::core::ir::Address as StorageAddress;
+
 #[derive(
     Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Deserialize, serde::Serialize,
 )]
@@ -56,6 +58,12 @@ macro_rules! impl_address_conversions {
 }
 
 impl_address_conversions!(u8, u16, u32, u64, usize);
+
+impl From<Address> for StorageAddress {
+    fn from(value: Address) -> Self {
+        Self::in_default_space(value.0)
+    }
+}
 
 macro_rules! impl_address_arithmetic {
     ($($t:ty => |$rhs:ident| $value:expr),* $(,)?) => {

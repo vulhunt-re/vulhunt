@@ -11,7 +11,7 @@ use itertools::Itertools;
 use self::strings::StringData;
 use crate::ir::{Address, Term, Type};
 use crate::lifter::Lifter;
-use crate::region::{Memory, Region};
+use crate::region::{Memory, MemoryReader};
 use crate::types::Confidence;
 
 bitflags! {
@@ -174,23 +174,14 @@ impl DataTypeDB {
         }
     }
 
-    pub fn identify_data_via<'a, T, A>(
+    pub fn identify_data_via(
         &self,
         memory: &Memory,
-        region: T,
-        address: A,
-    ) -> Option<DataInfo>
-    where
-        T: Into<Option<&'a Region>>,
-        A: Into<Address>,
-    {
-        let address = address.into();
-        let region = region.into().or_else(|| memory.find_region(&address))?;
-
-        let bytes = region.view_bytes_from(address).ok()?;
-        let range = &bytes[..MAX_STRING_LENGTH.min(bytes.len())];
-
-        self.identify_data(memory, range)
+        reader: &mut MemoryReader,
+        address: impl Into<Address>,
+    ) -> Option<DataInfo> {
+        let bytes = reader.bytes_at(address.into(), MAX_STRING_LENGTH)?;
+        self.identify_data(memory, bytes.as_contiguous()?)
     }
 
     pub fn identify_data(&self, memory: &Memory, bytes: &[u8]) -> Option<DataInfo> {
@@ -324,7 +315,7 @@ mod test {
 
     use super::*;
     use crate::lifter::LifterBuilder;
-    use crate::region::Region;
+    use crate::loader::LoaderRegion;
 
     #[test]
     fn test_mark_and_check() -> Result<(), Box<dyn std::error::Error>> {
@@ -356,14 +347,11 @@ mod test {
         let processors = Path::new(&data).join("processors");
 
         let lifter = LifterBuilder::new(processors)?.build("x86:LE:64:default", "efi")?;
-        let mut memory = Memory::new();
-
-        memory.add_region(Region::new(
-            "DATA",
-            Address::from(0x1000u32),
-            Endian::Little,
-            vec![0u8; 0x1000],
-        ));
+        let memory = Memory::new(&vec![LoaderRegion {
+            name: Some("DATA".into()),
+            bounds: Address::from(0x1000u32)..Address::from(0x2000u32),
+            ..Default::default()
+        }])?;
 
         let dt = DataTypeDB::new(&lifter);
 

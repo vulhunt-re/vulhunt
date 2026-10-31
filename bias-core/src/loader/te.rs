@@ -199,22 +199,12 @@ impl<'a> LoadedBinary for LoadedTE<'a> {
             lrgn.endian = Endian::Little;
 
             // TODO: relocations!
-            lrgn.bytes = if rsize < vsize {
-                tracing::trace!("raw section size < virtual size; padding with zeros");
-                let mut bytes = Vec::with_capacity(vsize);
-
-                bytes.extend_from_slice(&self.raw[rstart..rend]);
-                bytes.resize(vsize, 0u8);
-
+            if rsize < vsize {
                 lrgn.uninitialised = Some(
                     (Address::from(vstart as u64) + rsize)..(Address::from(vstart as u64) + vsize),
                 );
-
-                Cow::Owned(bytes)
-            } else {
-                let vrend = rstart + rsize.min(vsize);
-                Cow::Borrowed(&self.raw[rstart..vrend])
-            };
+            }
+            lrgn.bytes = Cow::Borrowed(&self.raw[rstart..rstart + rsize.min(vsize)]);
 
             f(&lrgn)
         }

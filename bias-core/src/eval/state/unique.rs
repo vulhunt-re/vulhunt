@@ -1,14 +1,14 @@
 use crate::eval::state::flat::FlatState;
-use crate::eval::state::traits::{State, StateOps, StateValue};
+use crate::eval::state::traits::{State, StateOps};
 use crate::ir::Address;
 
 pub use crate::eval::state::flat::Error;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[repr(transparent)]
-pub struct UniqueState<T: StateValue>(FlatState<T>);
+pub struct UniqueState(FlatState);
 
-impl<T: StateValue> UniqueState<T> {
+impl UniqueState {
     pub fn new(size: usize) -> Self {
         tracing::debug!("unique space size: {} bytes", size);
 
@@ -16,12 +16,12 @@ impl<T: StateValue> UniqueState<T> {
     }
 }
 
-impl<V: StateValue> State for UniqueState<V> {
+impl State for UniqueState {
     type Error = Error;
 
     #[inline(always)]
     fn fork(&self) -> Self {
-        Self(self.0.fork())
+        self.clone()
     }
 
     #[inline(always)]
@@ -30,16 +30,14 @@ impl<V: StateValue> State for UniqueState<V> {
     }
 }
 
-impl<V: StateValue> StateOps for UniqueState<V> {
-    type Value = V;
-
+impl StateOps for UniqueState {
     #[inline(always)]
     fn len(&self) -> usize {
         self.0.len()
     }
 
     #[inline(always)]
-    fn view_values<A>(&self, address: A, size: usize) -> Result<&[Self::Value], Self::Error>
+    fn view_values<A>(&self, address: A, size: usize) -> Result<&[u8], Self::Error>
     where
         A: Into<Address>,
     {
@@ -47,11 +45,7 @@ impl<V: StateValue> StateOps for UniqueState<V> {
     }
 
     #[inline(always)]
-    fn view_values_mut<A>(
-        &mut self,
-        address: A,
-        size: usize,
-    ) -> Result<&mut [Self::Value], Self::Error>
+    fn view_values_mut<A>(&mut self, address: A, size: usize) -> Result<&mut [u8], Self::Error>
     where
         A: Into<Address>,
     {

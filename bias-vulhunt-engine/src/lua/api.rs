@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use bias_core::analyses::blocks::CodeBlockBounds;
 use bias_core::analyses::symbolic::typed::{AliasOrigin, NamedValue};
+use bias_core::fugue::core::storage::SegmentView;
 use bias_core::ir::insn::InsnText;
 use bias_core::prelude::graph::algo::has_path_connecting;
 use bias_core::prelude::*;
@@ -1034,13 +1035,17 @@ impl<'a> CallSiteContext<'a> {
     }
 
     fn const_cstr(&self, from: &AliasValue) -> Option<String> {
-        self.with_bytes(from, |bytes| StringData::Ascii.decode(bytes).ok())
-            .flatten()
+        self.with_bytes(from, |view| {
+            StringData::Ascii
+                .decode(view.as_contiguous().unwrap_or_default())
+                .ok()
+        })
+        .flatten()
     }
 
     fn with_bytes<U, F>(&self, from: &AliasValue, mut f: F) -> Option<U>
     where
-        F: FnMut(&[u8]) -> U,
+        F: FnMut(&SegmentView) -> U,
     {
         match from {
             /*
@@ -1061,29 +1066,23 @@ impl<'a> CallSiteContext<'a> {
                     return None;
                 };
 
-                let Ok(base_val) = self.project.memory().view_bytes(base, self.address_bytes())
-                else {
-                    return None;
-                };
+                let mut reader = self.project.memory().reader();
+                let base_val = reader.read_pointer(base, self.address_bits()).ok()?;
 
                 let value = offset.unsigned_cast(self.address_bits() as _)
-                    + if self.project.lifter().endian().is_big() {
-                        BitVec::from_be_bytes(base_val)
-                    } else {
-                        BitVec::from_le_bytes(base_val)
-                    };
+                    + BitVec::from_u64(u64::from(base_val), self.address_bits() as _);
 
                 let Some(addr) = value.to_address() else {
                     return None;
                 };
 
-                let bytes = self.project.memory().view_bytes_from(addr).ok()?;
-                Some(f(bytes))
+                let view = reader.bytes_from(addr)?;
+                Some(f(&view))
             }
             AliasValue::V(bv) => {
                 if let Some(addr) = bv.to_address() {
-                    let bytes = self.project.memory().view_bytes_from(addr).ok()?;
-                    Some(f(bytes))
+                    let view = self.project.memory().reader().bytes_from(addr)?;
+                    Some(f(&view))
                 } else {
                     None
                 }
@@ -1106,7 +1105,7 @@ impl<'a> CallSiteContext<'a> {
                     let (start, bytes) = &self.stack_buffers[i];
                     let offset = (d - start) as usize;
 
-                    Some(f(&bytes[offset..]))
+                    Some(f(&SegmentView::contiguous(&bytes[offset..])))
                 } else {
                     None
                 }
@@ -1250,25 +1249,23 @@ impl<'a> FunctionContext<'a> {
         self.calls_with(|f| f.address() == addr, with_jumps)
     }
 
-    pub fn bytes(&self) -> impl Iterator<Item = (Address, &[u8])> {
+    pub fn bytes(&self) -> impl Iterator<Item = (Address, SegmentView<'a>)> {
+        let mut reader = self.project.memory().reader();
+
         self.f
             .chunks(self.project.code_blocks())
             .into_iter()
-            .filter_map(|iv| {
-                let start = iv.start;
-                let last = iv.end;
-                let count = usize::from(last - start);
-
-                let region = self.project.memory().find_region(start)?;
-                region
-                    .view_bytes(start, count)
-                    .ok()
-                    .map(|bytes| (start, bytes))
+            .filter_map(move |iv| {
+                let count = usize::from(iv.end - iv.start);
+                reader
+                    .bytes_at(iv.start, count)
+                    .filter(|bytes| bytes.size() == count as u64)
+                    .map(|bytes| (iv.start, bytes))
             })
     }
 
     pub fn total_bytes(&self) -> usize {
-        self.bytes().map(|(_, bytes)| bytes.len()).sum()
+        self.bytes().map(|(_, bytes)| bytes.size() as usize).sum()
     }
 
     pub fn is_reachable(&self, a1: impl Into<Address>, a2: impl Into<Address>) -> bool {
@@ -1391,7 +1388,7 @@ impl<'a> UserData for FunctionContext<'a> {
         methods.add_method("find", |lua, this, pat: PatternMatcher| {
             this.bytes()
                 .find_map(|(addr, bytes)| {
-                    pat.find_iter(bytes)
+                    pat.find_iter(bytes.as_contiguous().unwrap_or_default())
                         .next()
                         .map(|off| lua.create_ser_userdata(AddressValue::from(addr + off.start())))
                 })
@@ -1401,7 +1398,11 @@ impl<'a> UserData for FunctionContext<'a> {
         methods.add_method("matches", |_lua, this, pat: PatternMatcher| {
             Ok(this
                 .bytes()
-                .any(|(_, bytes)| pat.find_iter(bytes).next().is_some()))
+                .any(|(_, bytes)| {
+                    pat.find_iter(bytes.as_contiguous().unwrap_or_default())
+                        .next()
+                        .is_some()
+                }))
         });
 
         methods.add_method("blocks", |_lua, this, ()| {
@@ -1681,8 +1682,11 @@ impl<'a> OperandInfo<'a> {
             .into_lua(lua)?;
 
         let pre_call_bytes = pre_call_operand.and_then(|opnd| {
-            self.state
-                .with_bytes(&opnd.v, |bytes| bytes[..bytes.len().min(256)].to_vec())
+            self.state.with_bytes(&opnd.v, |view| {
+                let mut bytes = vec![0; (view.size() as usize).min(256)];
+                view.read_into(&mut bytes);
+                bytes
+            })
         });
 
         let pre_call_bytesf = lua
@@ -1698,8 +1702,11 @@ impl<'a> OperandInfo<'a> {
             .into_lua(lua)?;
 
         let post_call_bytes = operand.and_then(|opnd| {
-            self.state
-                .with_bytes(&opnd.v, |bytes| bytes[..bytes.len().min(256)].to_vec())
+            self.state.with_bytes(&opnd.v, |view| {
+                let mut bytes = vec![0; (view.size() as usize).min(256)];
+                view.read_into(&mut bytes);
+                bytes
+            })
         });
 
         let post_call_bytesf = lua
@@ -1881,9 +1888,11 @@ impl<'a> UserData for OperandInfo<'a> {
                 return Ok(None);
             };
 
-            Ok(this
-                .state
-                .with_bytes(&operand.v, |bytes| bytes[..bytes.len().min(limit)].to_vec()))
+            Ok(this.state.with_bytes(&operand.v, |view| {
+                let mut bytes = vec![0; (view.size() as usize).min(limit)];
+                view.read_into(&mut bytes);
+                bytes
+            }))
         });
 
         methods.add_method("post_call_bytes", |_lua, this, args: (Option<usize>,)| {
@@ -1892,9 +1901,11 @@ impl<'a> UserData for OperandInfo<'a> {
                 return Ok(None);
             };
 
-            Ok(this
-                .state
-                .with_bytes(&operand.v, |bytes| bytes[..bytes.len().min(limit)].to_vec()))
+            Ok(this.state.with_bytes(&operand.v, |view| {
+                let mut bytes = vec![0; (view.size() as usize).min(limit)];
+                view.read_into(&mut bytes);
+                bytes
+            }))
         });
 
         methods.add_method("bytes", |_lua, this, args: (Option<usize>,)| {
@@ -1903,9 +1914,11 @@ impl<'a> UserData for OperandInfo<'a> {
                 return Ok(None);
             };
 
-            Ok(this
-                .state
-                .with_bytes(&operand.v, |bytes| bytes[..bytes.len().min(limit)].to_vec()))
+            Ok(this.state.with_bytes(&operand.v, |view| {
+                let mut bytes = vec![0; (view.size() as usize).min(limit)];
+                view.read_into(&mut bytes);
+                bytes
+            }))
         })
     }
 }
@@ -2311,13 +2324,14 @@ impl SearchCodeResult {
 
                     let mut disas = Disassembler::new(project.lifter());
                     let mut insns = Vec::new();
+                    let mut reader = project.memory().reader();
 
                     let mut curr = addr;
                     let last = addr + bytes;
 
                     while curr < last {
                         let text = disas
-                            .disassemble_at(curr, project.memory())
+                            .disassemble_at(curr, &mut reader)
                             .map_err(|_| Error::external("invalid instruction"))?;
 
                         let size = text.len();

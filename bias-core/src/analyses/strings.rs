@@ -73,9 +73,9 @@ impl StringsXRefDB {
         })
     }
 
-    fn visit_string_xref(&mut self, project: &Project, xref: XRef) {
-        if let Ok(buf) = project.memory.view_bytes_from(xref.target()) {
-            let buf = &buf[..buf.len().min(STR_MAX + 1)];
+    fn visit_string_xref(&mut self, reader: &mut MemoryReader<'_>, xref: XRef) {
+        if let Some(view) = reader.bytes_at(xref.target(), STR_MAX + 1) {
+            let buf = view.as_contiguous().unwrap_or_default();
             let sx_ref = if let Some(m) = ASCII_RE_4.find_at(buf, 0) {
                 StringXRef::new(
                     xref,
@@ -125,8 +125,9 @@ impl Analysis for StringsXRefDB {
 
     fn analyse(&mut self, project: &mut Project) -> Result<(), AnalysisError> {
         let xrefs = project.get_analysis::<XRefDB>();
+        let mut reader = project.memory().reader();
         for (_, &xref) in xrefs.iter() {
-            self.visit_string_xref(project, xref);
+            self.visit_string_xref(&mut reader, xref);
         }
         Ok(())
     }

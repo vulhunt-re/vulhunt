@@ -32,7 +32,6 @@ pub mod strategy;
 pub mod traits;
 
 use self::observer::{Observer, ObserverError, ObserverId};
-use self::state::flat::FlatState;
 use self::state::paged::{PagedState, Segment as LoadedSegment};
 pub use self::state::pcode::Error as StateError;
 use self::state::pcode::PCodeState;
@@ -46,7 +45,7 @@ pub trait IRContext: Any + 'static {
     fn read_stack_pointer(&self) -> Result<Address, StateError>;
     fn write_stack_pointer(&mut self, value: Address) -> Result<(), StateError>;
 
-    fn read_bytes(&self, addr: Address, n: usize) -> Result<&[u8], StateError>;
+    fn read_bytes(&self, addr: Address, bytes: &mut [u8]) -> Result<(), StateError>;
     fn write_bytes(&mut self, addr: Address, bytes: &[u8]) -> Result<(), StateError>;
 
     fn read_addr(&self, addr: Address, bits: u32) -> Result<BitVec, StateError>;
@@ -64,8 +63,8 @@ pub trait IRContext: Any + 'static {
     fn write_operand(&mut self, operand: &PrototypeOperand, val: &BitVec)
         -> Result<(), StateError>;
 
-    fn memory(&self) -> &PagedState<u8>;
-    fn memory_mut(&mut self) -> &mut PagedState<u8>;
+    fn memory(&self) -> &PagedState;
+    fn memory_mut(&mut self) -> &mut PagedState;
 
     fn freeze(&self) -> Box<dyn Any>;
     fn restore(&mut self, old: &Box<dyn Any>);
@@ -73,23 +72,23 @@ pub trait IRContext: Any + 'static {
 
 macro_rules! impl_context {
     ($order:tt) => {
-        impl IRContext for PCodeState<u8, $order> {
+        impl IRContext for PCodeState<$order> {
             fn freeze(&self) -> Box<dyn Any> {
-                Box::new(<PCodeState<u8, $order> as State>::fork(self))
+                Box::new(<PCodeState<$order> as State>::fork(self))
             }
 
             fn restore(&mut self, old: &Box<dyn Any>) {
                 let old_slf = old.downcast_ref::<Self>().expect("downcast from Self");
 
-                <PCodeState<u8, $order> as State>::restore(self, old_slf)
+                <PCodeState<$order> as State>::restore(self, old_slf)
             }
 
-            fn memory(&self) -> &PagedState<u8> {
-                PCodeState::<u8, $order>::memory(self)
+            fn memory(&self) -> &PagedState {
+                PCodeState::<$order>::memory(self)
             }
 
-            fn memory_mut(&mut self) -> &mut PagedState<u8> {
-                PCodeState::<u8, $order>::memory_mut(self)
+            fn memory_mut(&mut self) -> &mut PagedState {
+                PCodeState::<$order>::memory_mut(self)
             }
 
             fn read_program_counter(&self) -> Result<Address, StateError> {
@@ -117,56 +116,46 @@ macro_rules! impl_context {
                 self.write_addr(address, &val)
             }
 
-            fn read_bytes(&self, addr: Address, n: usize) -> Result<&[u8], StateError> {
+            fn read_bytes(&self, addr: Address, bytes: &mut [u8]) -> Result<(), StateError> {
                 self.memory()
-                    .view_values(u64::from(addr), n)
+                    .read_values(addr, bytes)
                     .map_err(StateError::Memory)
             }
 
             fn write_bytes(&mut self, addr: Address, bytes: &[u8]) -> Result<(), StateError> {
                 self.memory_mut()
-                    .view_values_mut(u64::from(addr), bytes.len())
-                    .map_err(StateError::Memory)?
-                    .copy_from_slice(bytes);
-                Ok(())
+                    .write_values(addr, bytes)
+                    .map_err(StateError::Memory)
             }
 
             fn read_addr(&self, addr: Address, bits: u32) -> Result<BitVec, StateError> {
                 debug_assert!(bits % 8 == 0);
 
-                let offset = u64::from(addr);
-                let bytes = bits as usize / 8;
-
-                let view = self
-                    .memory()
-                    .view_values(offset, bytes)
+                let mut view = SmallVec::<[u8; 16]>::from_elem(0, bits as usize / 8);
+                self.memory()
+                    .read_values(addr, &mut view)
                     .map_err(StateError::Memory)?;
 
                 Ok(if <$order as ByteOrder>::ENDIAN.is_big() {
-                    BitVec::from_be_bytes(view)
+                    BitVec::from_be_bytes(&view)
                 } else {
-                    BitVec::from_le_bytes(view)
+                    BitVec::from_le_bytes(&view)
                 })
             }
 
             fn write_addr(&mut self, addr: Address, val: &BitVec) -> Result<(), StateError> {
                 debug_assert!(val.nbits() % 8 == 0);
 
-                let offset = u64::from(addr);
-                let bytes = val.nbits() as usize / 8;
-
-                let view = self
-                    .memory_mut()
-                    .view_values_mut(offset, bytes)
-                    .map_err(StateError::Memory)?;
-
+                let mut view = SmallVec::<[u8; 16]>::from_elem(0, val.nbits() as usize / 8);
                 if <$order as ByteOrder>::ENDIAN.is_big() {
-                    val.to_be_bytes(view)
+                    val.to_be_bytes(&mut view)
                 } else {
-                    val.to_le_bytes(view)
+                    val.to_le_bytes(&mut view)
                 }
 
-                Ok(())
+                self.memory_mut()
+                    .write_values(addr, &view)
+                    .map_err(StateError::Memory)
             }
 
             fn read_operand(&self, operand: &PrototypeOperand) -> Result<BitVec, StateError> {
@@ -299,9 +288,7 @@ macro_rules! impl_context {
                         .view_values_mut(offset, bytes)
                         .map_err(StateError::Temporary)?
                 } else {
-                    self.memory_mut()
-                        .view_values_mut(offset, bytes)
-                        .map_err(StateError::Memory)?
+                    return self.write_addr(Address::from(offset), val);
                 };
 
                 if <$order as ByteOrder>::ENDIAN.is_big() {
@@ -334,9 +321,7 @@ macro_rules! impl_context {
                         .view_values(offset, bytes)
                         .map_err(StateError::Temporary)?
                 } else {
-                    self.memory()
-                        .view_values(offset, bytes)
-                        .map_err(StateError::Memory)?
+                    return self.read_addr(Address::from(offset), var.nbits());
                 };
 
                 Ok(if <$order as ByteOrder>::ENDIAN.is_big() {
@@ -735,43 +720,23 @@ impl IREvaluator {
                 .wrapping_sub(1),
         );
 
-        let mut backing = Vec::with_capacity(
-            context
-                .memory
-                .regions()
-                .iter(..)
-                .map(|(_, r)| r.bytes().len())
-                .sum(),
-        );
-
-        let ivt = context
+        let segments = context
             .memory
             .regions()
             .iter(..)
-            .filter_map(|(iv, r)| {
-                if config.ignore_zero_region && iv.contains(&Address::from(0u64)) {
-                    None
-                } else {
-                    let iv = iv.start..iv.end;
-                    let loaded = LoadedSegment::new(r.name(), backing.len());
-                    backing.extend_from_slice(r.bytes());
-                    Some((iv.clone(), loaded))
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let flat = FlatState::from_vec(backing);
-        let mut state = PagedState::from_parts(ivt, flat);
+            .filter(|(iv, _)| !(config.ignore_zero_region && iv.contains(&Address::from(0u64))))
+            .map(|(iv, r)| (iv, LoadedSegment::new(r.name())));
+        let mut state = PagedState::new(context.memory.segments().clone(), segments);
 
         state
             .static_mapping("stack", config.stack_base, config.stack_size)
             .map_err(|_| Error::Configuration("could not create stack"))?;
 
         let mut context = if language.endian().is_big() {
-            let context = PCodeState::<_, BE>::new(state, language, convention);
+            let context = PCodeState::<BE>::new(state, language, convention);
             Box::new(context) as Box<dyn IRContext>
         } else {
-            let context = PCodeState::<_, LE>::new(state, language, convention);
+            let context = PCodeState::<LE>::new(state, language, convention);
             Box::new(context) as Box<dyn IRContext>
         };
 
@@ -950,11 +915,11 @@ impl IREvaluator {
         self.config.stack_base + self.config.stack_size
     }
 
-    pub fn stack(&self) -> Result<(Address, &[u8]), Error> {
+    pub fn stack(&self) -> Result<(Address, Vec<u8>), Error> {
         let addr = self.context.read_stack_pointer()?;
-        let bytes = self
-            .context
-            .read_bytes(self.config.stack_base, self.config.stack_size)?;
+        let mut bytes = vec![0; self.config.stack_size];
+        self.context
+            .read_bytes(self.config.stack_base, &mut bytes)?;
 
         Ok((addr, bytes))
     }

@@ -1331,20 +1331,10 @@ impl<'a> LoadedELF<'a> {
 
             tracing::trace!("loading region {}-{}", lrgn.bounds.start, lrgn.bounds.end);
 
-            lrgn.bytes = if rsize < vsize {
-                tracing::trace!("section file size < section loaded size; padding with zeros");
-                let mut bytes = Vec::with_capacity(vsize);
-
-                bytes.extend_from_slice(&self.raw[rbounds]);
-                bytes.resize(vsize, 0u8);
-
+            if rsize < vsize {
                 lrgn.uninitialised = Some((vstart + rsize)..(vstart + vsize));
-
-                Cow::Owned(bytes)
-            } else {
-                let vrend = rstart + rsize.min(vsize);
-                Cow::Borrowed(&self.raw[rstart..vrend])
-            };
+            }
+            lrgn.bytes = Cow::Borrowed(&self.raw[rstart..rstart + rsize.min(vsize)]);
 
             self.apply_relocations(&mut lrgn);
 
@@ -1404,24 +1394,17 @@ impl<'a> LoadedELF<'a> {
 
                 tracing::trace!("loading region {}-{}", lrgn.bounds.start, lrgn.bounds.end);
 
-                lrgn.bytes = if rsize < rvend {
-                    let mut bytes = Vec::with_capacity(rvsize);
-
-                    if rvstart < rsize {
-                        bytes.extend_from_slice(&self.raw[rstart + rvstart..rstart + rsize]);
-                    }
-
-                    let ustart = Address::from(*range.start()) + bytes.len();
-                    let uend = Address::from(*range.start()) + rvsize;
-
-                    lrgn.uninitialised = Some(ustart..uend);
-
-                    bytes.resize(rvsize, 0u8);
-
-                    Cow::Owned(bytes)
+                if rsize < rvend {
+                    let initialised = rsize.saturating_sub(rvstart);
+                    lrgn.uninitialised = Some(
+                        (Address::from(*range.start()) + initialised)
+                            ..(Address::from(*range.start()) + rvsize),
+                    );
+                    lrgn.bytes =
+                        Cow::Borrowed(&self.raw[rstart + rvstart.min(rsize)..rstart + rsize]);
                 } else {
-                    Cow::Borrowed(&self.raw[rvbounds])
-                };
+                    lrgn.bytes = Cow::Borrowed(&self.raw[rvbounds]);
+                }
 
                 self.apply_relocations(&mut lrgn);
 
@@ -1509,20 +1492,10 @@ impl<'a> LoadedELF<'a> {
                 lrgn.bounds.end
             );
 
-            lrgn.bytes = if rsize < vsize {
-                tracing::trace!("section file size < section loaded size; padding with zeros");
-                let mut bytes = Vec::with_capacity(vsize);
-
-                bytes.extend_from_slice(&self.raw[rbounds]);
-                bytes.resize(vsize, 0u8);
-
+            if rsize < vsize {
                 lrgn.uninitialised = Some((vstart + rsize)..(vstart + vsize));
-
-                Cow::Owned(bytes)
-            } else {
-                let vrend = rstart + rsize.min(vsize);
-                Cow::Borrowed(&self.raw[rstart..vrend])
-            };
+            }
+            lrgn.bytes = Cow::Borrowed(&self.raw[rstart..rstart + rsize.min(vsize)]);
 
             sections.push(Some(lrgn));
         }

@@ -1,4 +1,5 @@
 use crate::analyses::symbolic::typed::*;
+use crate::efi::guids::GUID_LEN;
 use crate::efi::pei::SIDT;
 use crate::efi::services::EFI_PEI_PPI_DESCRIPTOR_TERMINATE_LIST;
 use crate::prelude::efi::*;
@@ -40,7 +41,15 @@ impl<'a> EFITypeResolver<'a> {
         from: &AliasValue,
     ) -> Option<Term<Type>> {
         context
-            .with_bytes(from, |bytes| self.resolve_protocol_type(context, bytes))
+            .with_bytes(from, |view| {
+                if view.size() < GUID_LEN as u64 {
+                    return None;
+                }
+
+                let mut guid = [0u8; GUID_LEN];
+                view.read_into(&mut guid);
+                self.resolve_protocol_type(context, &guid)
+            })
             .flatten()
     }
 
@@ -52,7 +61,7 @@ impl<'a> EFITypeResolver<'a> {
         notify: bool,
     ) -> Vec<Address> {
         context
-            .with_bytes(from, |bytes| {
+            .with_bytes(from, |view| {
                 let t = context
                     .typedb
                     .get_type_for("EFI_PEI_PPI_DESCRIPTOR", context.address_bits())
@@ -67,8 +76,13 @@ impl<'a> EFITypeResolver<'a> {
                 let pointer = &fields[2];
 
                 let mut ppis = Vec::new();
+                let mut reader = context.memory.reader();
 
-                for ppi_bytes in bytes.chunks_exact(type_bytes) {
+                for ppi_bytes in view
+                    .as_contiguous()
+                    .unwrap_or_default()
+                    .chunks_exact(type_bytes)
+                {
                     let flags_bytes =
                         &ppi_bytes[flags.offset()..flags.offset() + flags.type_().nbytes()];
                     let guidp_bytes =
@@ -84,12 +98,7 @@ impl<'a> EFITypeResolver<'a> {
                     if notify {
                         ppis.push(pointer);
                     } else {
-                        if let Some(addr_bytes) = context
-                            .memory
-                            .view_bytes(pointer, context.address_bytes())
-                            .ok()
-                        {
-                            let pointer = BitVec::from_le_bytes(addr_bytes).to_address().unwrap();
+                        if let Ok(pointer) = reader.read_pointer(pointer, context.address_bits()) {
                             ppis.push(pointer);
                         }
                     }

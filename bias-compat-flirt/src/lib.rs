@@ -235,7 +235,7 @@ impl FLIRTDB {
         fmatches: &mut FLIRTMatches,
         fsyms: &mut FLIRTSymbols,
     ) {
-        let memory = project.memory();
+        let mut reader = project.memory().reader();
 
         for sigset in self.signatures.iter() {
             let mut worklist = project.functions().values().collect::<VecDeque<_>>();
@@ -253,13 +253,16 @@ impl FLIRTDB {
                     continue;
                 };
 
-                let size = f_last.offset() - address.offset();
+                let size = (f_last.offset() - address.offset()) as usize;
 
-                let Ok(bytes) = memory.view_bytes(address, size as _) else {
+                let Some(view) = reader
+                    .bytes_at(address, size)
+                    .filter(|bytes| bytes.size() == size as u64)
+                else {
                     continue;
                 };
 
-                let signatures = sigset.r#match(&bytes);
+                let signatures = sigset.r#match(view.as_contiguous().unwrap_or_default());
 
                 for signature in signatures.into_iter() {
                     'name: for name in signature.names.iter() {

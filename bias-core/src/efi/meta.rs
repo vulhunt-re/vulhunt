@@ -1,3 +1,5 @@
+use std::io::{self, Read};
+
 use ahash::AHashSet;
 use sha2::{Digest, Sha256};
 use ustr::Ustr;
@@ -67,8 +69,21 @@ impl Analysis for ModuleSignature {
         }
 
         let mut hasher = Sha256::default();
+        let mut reader = project.memory().reader();
         for region in project.memory().regions().values(..) {
-            hasher.update(region.bytes());
+            let Some(view) = reader.bytes_from(*region.address()) else {
+                continue;
+            };
+
+            let mut position = 0;
+            for chunk in view.chunks() {
+                io::copy(&mut io::repeat(0).take(chunk.offset() - position), &mut hasher)
+                    .expect("hashing does not fail");
+                hasher.update(chunk.bytes());
+                position = chunk.offset() + chunk.bytes().len() as u64;
+            }
+            io::copy(&mut io::repeat(0).take(view.size() - position), &mut hasher)
+                .expect("hashing does not fail");
         }
 
         self.digest.copy_from_slice(&hasher.finalize()[..]);

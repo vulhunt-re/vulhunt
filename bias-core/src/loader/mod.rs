@@ -15,7 +15,6 @@ use crate::kb::function::FunctionInfo;
 use crate::kb::{uuid, Uuid};
 use crate::lifter::Lifter;
 use crate::project::analysis::{AnalysisState, AnalysisStateInfo};
-use crate::region::Region;
 
 pub mod container;
 pub mod efi;
@@ -282,20 +281,17 @@ impl<'a> LoaderRegion<'a> {
     }
 
     pub fn view_bytes_mut(&mut self, offset: usize, count: usize) -> Option<&mut [u8]> {
-        let len = self.bytes.len();
-        if offset >= len {
+        let last_offset = offset.checked_add(count)?;
+        if last_offset > usize::from(self.bounds.end - self.bounds.start) {
             return None;
         }
 
-        if let Some(last_offset) = offset.checked_add(count) {
-            if last_offset > len {
-                None
-            } else {
-                Some(&mut self.bytes.to_mut()[offset..last_offset])
-            }
-        } else {
-            None
+        let bytes = self.bytes.to_mut();
+        if last_offset > bytes.len() {
+            bytes.resize(last_offset, 0u8);
         }
+
+        Some(&mut bytes[offset..last_offset])
     }
 }
 
@@ -573,7 +569,7 @@ where
 
 pub struct MockBinaryLoader {
     lifter: Lifter,
-    regions: Vec<Region>,
+    regions: Vec<LoaderRegion<'static>>,
 }
 
 impl MockBinaryLoader {
@@ -584,14 +580,14 @@ impl MockBinaryLoader {
         }
     }
 
-    pub fn add_region(&mut self, region: Region) {
+    pub fn add_region(&mut self, region: LoaderRegion<'static>) {
         self.regions.push(region);
     }
 }
 
 impl Loader for MockBinaryLoader {
     type Error = Infallible;
-    type Loaded = Vec<Region>;
+    type Loaded = Vec<LoaderRegion<'static>>;
 
     fn load_file<P>(self, _path: P) -> Result<(Lifter, Self::Loaded), Self::Error>
     where
@@ -601,21 +597,13 @@ impl Loader for MockBinaryLoader {
     }
 }
 
-impl LoadedBinary for Vec<Region> {
+impl<'r> LoadedBinary for Vec<LoaderRegion<'r>> {
     fn for_each_region<'a, F>(&'a self, mut f: F)
     where
         F: FnMut(&LoaderRegion<'a>),
     {
         for r in self.iter() {
-            f(&LoaderRegion {
-                name: Some(r.name().as_str().into()),
-                code: r.is_code(),
-                read_only: r.is_read_only(),
-                uninitialised: r.uninitialised_interval().cloned(),
-                bounds: *r.address()..*r.address() + r.len(),
-                endian: r.endian(),
-                bytes: Cow::Borrowed(r.bytes()),
-            })
+            f(r)
         }
     }
 }

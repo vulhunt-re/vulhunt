@@ -42,7 +42,7 @@ encode_unicode = "1"
 fixedbitset = { version = "0.4", features = ["serde"] }
 flate2 = { version = "1", features = ["zlib-rs"], default-features = false }
 fst = "0.4"
-fugue = { git = "https://github.com/fugue-re/fugue-core-next.git", rev = "bb92dec3dcdf0122d9264c64f8cd3d93e587d9d1", default-features = false }
+fugue = { git = "https://github.com/fugue-re/fugue-core-next.git", rev = "c708549a2f0f3de67cd944cf81628088197c07cc", default-features = false, features = ["core"] }
 gazebo = "0.8"
 gimli = "0.28"
 goblin = { version = "0.4", package = "bias-goblin" }
@@ -70,6 +70,7 @@ shared_arena = { version = "0.8", package = "bias-shared-arena" }
 slab = { version = "0.4.5", features = ["serde"] }
 smallvec = { version = "1.10", features = ["serde"] }
 thiserror = "1"
+tempfile = "3"
 ustr = { version = "0.9", features = ["serialization"] }
 uuid = { version = "1.1", features = ["serde", "v4"] }
 walkdir = { version = "2", optional = true }

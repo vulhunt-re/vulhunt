@@ -362,7 +362,7 @@ pub trait PlatformComponentGuidedBinaryLoader: PlatformComponentBinaryLoader {
         lifter: Lifter,
         config: &ProjectConfig,
     ) -> Result<Project, PlatformError> {
-        Ok(Project::new_with(binary, lifter, config))
+        Project::new_with(binary, lifter, config).map_err(PlatformError::project)
     }
 }
 

@@ -1,19 +1,19 @@
 use fugue::lifter::runtime::pcode::Varnode;
 
 use crate::eval::state::flat::FlatState;
-use crate::eval::state::traits::{State, StateOps, StateValue};
+use crate::eval::state::traits::{State, StateOps};
 use crate::ir::Address;
 
 pub use crate::eval::state::flat::Error;
 
 #[derive(Debug, Clone)]
-pub struct RegisterState<T: StateValue> {
+pub struct RegisterState {
     program_counter: Varnode,
     stack_pointer: Varnode,
-    inner: FlatState<T>,
+    inner: FlatState,
 }
 
-impl<T: StateValue> RegisterState<T> {
+impl RegisterState {
     pub fn new(size: usize, program_counter: Varnode, stack_pointer: Varnode) -> Self {
         tracing::debug!("register space size: {} bytes", size);
 
@@ -33,16 +33,12 @@ impl<T: StateValue> RegisterState<T> {
     }
 }
 
-impl<V: StateValue> State for RegisterState<V> {
+impl State for RegisterState {
     type Error = Error;
 
     #[inline(always)]
     fn fork(&self) -> Self {
-        Self {
-            program_counter: self.program_counter,
-            stack_pointer: self.stack_pointer,
-            inner: self.inner.fork(),
-        }
+        self.clone()
     }
 
     #[inline(always)]
@@ -51,16 +47,14 @@ impl<V: StateValue> State for RegisterState<V> {
     }
 }
 
-impl<V: StateValue> StateOps for RegisterState<V> {
-    type Value = V;
-
+impl StateOps for RegisterState {
     #[inline(always)]
     fn len(&self) -> usize {
         self.inner.len()
     }
 
     #[inline(always)]
-    fn view_values<A>(&self, address: A, size: usize) -> Result<&[Self::Value], Self::Error>
+    fn view_values<A>(&self, address: A, size: usize) -> Result<&[u8], Self::Error>
     where
         A: Into<Address>,
     {
@@ -68,11 +62,7 @@ impl<V: StateValue> StateOps for RegisterState<V> {
     }
 
     #[inline(always)]
-    fn view_values_mut<A>(
-        &mut self,
-        address: A,
-        size: usize,
-    ) -> Result<&mut [Self::Value], Self::Error>
+    fn view_values_mut<A>(&mut self, address: A, size: usize) -> Result<&mut [u8], Self::Error>
     where
         A: Into<Address>,
     {

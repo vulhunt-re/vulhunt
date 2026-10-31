@@ -851,20 +851,10 @@ impl<'a> LoadedBinary for LoadedEFI<'a> {
                 lrgn.bounds = vbounds;
                 lrgn.endian = Endian::Little;
 
-                lrgn.bytes = if rsize < vsize {
-                    tracing::trace!("raw section size < virtual size; padding with zeros");
-                    let mut bytes = Vec::with_capacity(vsize);
-
-                    bytes.extend_from_slice(&raw[rstart..rend]);
-                    bytes.resize(vsize, 0u8);
-
+                if rsize < vsize {
                     lrgn.uninitialised = Some((vstart + rsize)..(vstart + vsize));
-
-                    Cow::Owned(bytes)
-                } else {
-                    let vrend = rstart + rsize.min(vsize);
-                    Cow::Borrowed(&raw[rstart..vrend])
-                };
+                }
+                lrgn.bytes = Cow::Borrowed(&raw[rstart..rstart + rsize.min(vsize)]);
 
                 if let Some(relocs) = relocs.as_ref() {
                     let rva_bounds = section.virtual_address()
@@ -1047,20 +1037,10 @@ impl<'a> LoadedBinary for LoadedEFI<'a> {
                 lrgn.endian = Endian::Little;
 
                 // TODO: relocations!
-                lrgn.bytes = if rsize < vsize {
-                    tracing::trace!("raw section size < virtual size; padding with zeros");
-                    let mut bytes = Vec::with_capacity(vsize);
-
-                    bytes.extend_from_slice(&raw[rstart..rend]);
-                    bytes.resize(vsize, 0u8);
-
+                if rsize < vsize {
                     lrgn.uninitialised = Some((vstart + rsize)..(vstart + vsize));
-
-                    Cow::Owned(bytes)
-                } else {
-                    let vrend = rstart + rsize.min(vsize);
-                    Cow::Borrowed(&raw[rstart..vrend])
-                };
+                }
+                lrgn.bytes = Cow::Borrowed(&raw[rstart..rstart + rsize.min(vsize)]);
 
                 f(&lrgn)
             }

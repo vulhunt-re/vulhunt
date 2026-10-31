@@ -19,7 +19,6 @@ use crate::ir::{Address, Expr, Term, Var};
 use crate::kb::function::Function;
 use crate::kb::{uuid, Lazy, Uuid};
 use crate::lifter::Lifter;
-use crate::region::Region;
 
 #[derive(Copy, Clone, Default)]
 pub struct ARM;
@@ -273,7 +272,8 @@ impl Arch for ARM {
         &self,
         lifter: &Lifter,
         ctx: &mut LiftingContext,
-        segment: &Region,
+        start: Address,
+        bytes: &[u8],
         mut f: F,
     ) where
         Self: Sized,
@@ -283,11 +283,9 @@ impl Arch for ARM {
         let mut thumb_functions = 0usize;
         let mut arm_functions = 0usize;
 
-        if let Some(matches) =
-            <Self as Arch>::function_start_patterns(self, &lifter, segment.bytes())
-        {
+        if let Some(matches) = <Self as Arch>::function_start_patterns(self, lifter, bytes) {
             for (range, context, _confidence) in matches {
-                let addr = *segment.address() + range.start;
+                let addr = start + range.start;
                 // discard if not aligned
                 if addr.offset() % alignment != 0 {
                     continue;
@@ -340,7 +338,7 @@ impl Arch for ARM {
 
         let addr = lifter
             .language()
-            .wrap_offset_in_default_space(segment.address().offset());
+            .wrap_offset_in_default_space(start.offset());
 
         ctx.set_variable_by_bits(TMODE_CONTEXT, addr, tmode as u32);
         ctx.set_variable_by_bits(LRSET_CONTEXT, addr, 0);

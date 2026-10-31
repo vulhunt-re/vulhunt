@@ -731,6 +731,7 @@ impl Pipeline {
                                                         .map_err(PipelineError::source)?
                                                 } else {
                                                     Project::new_with(&component, lifter, config)
+                                                        .map_err(PipelineError::source)?
                                                 };
 
                                             let nresult =

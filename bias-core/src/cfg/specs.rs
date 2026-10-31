@@ -1,3 +1,4 @@
+use fugue::core::storage::SegmentView;
 use fugue::specs::common::{GroupOrValueVisitor, LanguageSpec, PlatformConstraint};
 use fugue::specs::{FunctionProperties, FunctionSpec};
 use ustr::{Ustr, UstrSet};
@@ -114,13 +115,19 @@ impl<'a> FunctionSpecManager<'a> {
 
 impl Symbolise for FunctionSpecManager<'_> {
     fn apply_symbols(&self, target: &mut Project) -> Result<(), SymboliseError> {
+        let mut reader = target.memory.reader();
         for f in target.ftable.values_mut().filter(|f| f.name().is_none()) {
             let addr = f.address();
-            let bytes = f.bytes(&target.cbtable, &target.memory);
+            let bytes = f.bytes(&target.cbtable, &mut reader);
 
             tracing::trace!("attempting to apply symbol to function at {addr}");
 
-            let Some(spec) = self.matches_bytes(bytes) else {
+            let Some(spec) = self.matches_bytes(
+                bytes
+                    .as_ref()
+                    .and_then(SegmentView::as_contiguous)
+                    .unwrap_or_default(),
+            ) else {
                 continue;
             };
 

@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::mem;
 use std::ops::Range;
 
+use fugue::core::storage::SegmentView;
+use fugue::lifter::runtime::input::MAX_INSN_BYTES;
 use fugue::lifter::runtime::pcode::{LiftingContext, PCodeOp};
 use iset::IntervalMap;
 use petgraph::graph::NodeIndex;
@@ -38,17 +40,17 @@ impl GuidedFunctionEntry {
     }
 }
 
-pub struct S0<'a, 's> {
+pub struct S0<'a> {
     ctx: LiftingContext,
     operations: Vec<PCodeOp>,
     cache: StmtCache,
     itable: &'a mut InsnTermTable,
     blocks: AHashMap<Address, (NodeIndex, CodeBlockId)>,
-    worklist: VecDeque<(Range<Address>, &'s [u8])>,
+    worklist: VecDeque<Range<Address>>,
     block_contexts: BTreeMap<Address, ContextUpdates>,
 }
 
-impl<'a, 's> S0<'a, 's> {
+impl<'a> S0<'a> {
     pub fn blocks(&self) -> &AHashMap<Address, (NodeIndex, CodeBlockId)> {
         &self.blocks
     }
@@ -89,7 +91,7 @@ impl<'a> S2<'a> {
     }
 }
 
-pub type Stage0<'a, 's> = S0<'a, 's>;
+pub type Stage0<'a> = S0<'a>;
 pub type Stage1<'a> = S1<'a>;
 pub type Stage2<'a> = S2<'a>;
 
@@ -263,8 +265,8 @@ fn unlink_forward_unreachable_blocks(
     }
 }
 
-impl<'a, 's> GuidedICFGBuilder<'a, S0<'a, 's>> {
-    pub fn new(project: &'a mut Project) -> GuidedICFGBuilder<'a, S0<'a, 's>> {
+impl<'a> GuidedICFGBuilder<'a, S0<'a>> {
+    pub fn new(project: &'a mut Project) -> GuidedICFGBuilder<'a, S0<'a>> {
         let itable = mem::take(&mut project.itable).into();
 
         GuidedICFGBuilder {
@@ -295,22 +297,27 @@ impl<'a, 's> GuidedICFGBuilder<'a, S0<'a, 's>> {
     }
 
     #[inline]
-    pub fn schedule_block(&mut self, range: impl Into<Range<Address>>, bytes: &'s [u8]) {
-        self.schedule_block_with_context(range, bytes, None);
+    pub fn schedule_mapped_block(&mut self, start: impl Into<Address>, size: usize) {
+        self.schedule_mapped_block_with_context(start, size, None);
     }
 
     #[inline]
-    pub fn schedule_block_with_context(
+    pub fn schedule_mapped_block_with_context(
         &mut self,
-        range: impl Into<Range<Address>>,
-        bytes: &'s [u8],
+        start: impl Into<Address>,
+        size: usize,
         context: impl Into<Option<ContextUpdates>>,
     ) {
-        let range = range.into();
-        if let Some(ctx) = context.into() {
-            self.state.block_contexts.insert(range.start, ctx);
+        let start = start.into();
+
+        if !self.context.memory.contains_range(start, size) {
+            return;
         }
-        self.state.worklist.push_back((range, bytes));
+
+        if let Some(ctx) = context.into() {
+            self.state.block_contexts.insert(start, ctx);
+        }
+        self.state.worklist.push_back(start..start + size);
     }
 
     #[inline]
@@ -342,8 +349,9 @@ impl<'a, 's> GuidedICFGBuilder<'a, S0<'a, 's>> {
     #[inline]
     pub fn execute(&mut self) {
         let mut worklist = mem::take(&mut self.state.worklist);
+        let mut reader = self.context.memory.reader();
 
-        while let Some((Range { start, end }, bytes)) = worklist.pop_front() {
+        while let Some(Range { start, end }) = worklist.pop_front() {
             self.state.blocks.insert(start, Default::default());
 
             if let Some(ctx_updates) = self.state.block_contexts.get(&start) {
@@ -355,8 +363,15 @@ impl<'a, 's> GuidedICFGBuilder<'a, S0<'a, 's>> {
                 ctx_updates.apply(address, &mut self.state.ctx);
             }
 
-            let mut offset = 0;
             let roffset = usize::from(end - start);
+            let view = reader.bytes_from(start);
+            let run = view
+                .as_ref()
+                .and_then(SegmentView::as_contiguous)
+                .unwrap_or_default();
+            let mut insn_bytes = [0u8; MAX_INSN_BYTES];
+
+            let mut offset = 0;
 
             while offset < roffset {
                 let start = start + offset;
@@ -364,13 +379,26 @@ impl<'a, 's> GuidedICFGBuilder<'a, S0<'a, 's>> {
                     break;
                 }
 
+                let wanted = (roffset - offset).min(MAX_INSN_BYTES);
+                let bytes = match run.get(offset..) {
+                    Some(bytes) if bytes.len() >= wanted => {
+                        &bytes[..bytes.len().min(roffset - offset)]
+                    }
+                    _ => {
+                        let read = reader
+                            .read_bytes(start, &mut insn_bytes[..wanted])
+                            .unwrap_or(0);
+                        &insn_bytes[..read]
+                    }
+                };
+
                 let ilink = match InsnInfo::new(
                     self.context.lifter,
                     &mut self.state.ctx,
                     &mut self.state.operations,
                     &mut self.state.cache,
                     start,
-                    &bytes[offset..],
+                    bytes,
                 ) {
                     Ok(ilink) if ilink.len() > 0 => ilink,
                     _ => {
@@ -404,33 +432,6 @@ impl<'a, 's> GuidedICFGBuilder<'a, S0<'a, 's>> {
                 functions: Default::default(),
             },
         }
-    }
-}
-
-impl<'a> GuidedICFGBuilder<'a, S0<'a, 'a>> {
-    #[inline]
-    pub fn schedule_mapped_block(&mut self, start: impl Into<Address>, size: usize) {
-        self.schedule_mapped_block_with_context(start, size, None);
-    }
-
-    #[inline]
-    pub fn schedule_mapped_block_with_context(
-        &mut self,
-        start: impl Into<Address>,
-        size: usize,
-        context: impl Into<Option<ContextUpdates>>,
-    ) {
-        let start = start.into();
-        let end = start + size;
-
-        let Ok(bytes) = self.context.memory.view_bytes(start, size) else {
-            return;
-        };
-
-        if let Some(ctx) = context.into() {
-            self.state.block_contexts.insert(start, ctx);
-        }
-        self.state.worklist.push_back((start..end, bytes));
     }
 }
 

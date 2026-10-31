@@ -126,11 +126,9 @@ impl<'a> BNDBLoadedBinary<'a> {
         let range = self.externs.base()..(self.externs.base() + extern_size);
 
         let mut mapping = Vec::with_capacity(extern_size);
-        for _ in 0..self.externs.len() {
+        for i in 0..self.externs.len() {
+            mapping.resize(i * stub_size, 0);
             mapping.extend_from_slice(template.bytes());
-            if template.len() < stub_size {
-                mapping.resize(mapping.len() + (stub_size - template.len()), 0);
-            }
         }
 
         Some(LoaderRegion {
