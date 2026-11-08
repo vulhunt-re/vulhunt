@@ -54,7 +54,7 @@ pub use crate::kb::xref::{XRef, XRefKind};
 pub use crate::kb::{ustr, uuid, AHashMap, AHashSet, AHasher, Ustr, Uuid};
 pub use crate::lifter::{
     DefaultPrototype, Disassembler, Lifter, LifterBuilder, LifterBuilderError, LifterError,
-    PrototypeResolver,
+    PrototypeResolver, SpaceManager,
 };
 pub use crate::loader::efi::{EFIModule, EFIModuleInfo, LoadedEFI, LoadedEFIModule};
 pub use crate::loader::elf::LoadedELF;

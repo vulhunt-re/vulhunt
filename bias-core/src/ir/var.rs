@@ -15,7 +15,7 @@ use crate::ir::Address;
 use crate::kb::block::CodeBlock;
 use crate::kb::function::Function;
 use crate::kb::table::MPointTable;
-use crate::lifter::Lifter;
+use crate::lifter::{Lifter, SpaceManager};
 use crate::Project;
 
 #[derive(
@@ -200,7 +200,7 @@ impl VarView {
 
     pub fn registers(language: &'static Language) -> VarView {
         Self {
-            space: language.space_id(language.register_space()),
+            space: language.register_space_id(),
             intervals: IntervalSet::from_iter(
                 language
                     .registers()

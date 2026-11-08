@@ -16,6 +16,7 @@ use crate::ir::term::{Term, TermMut};
 use crate::ir::traits::*;
 use crate::ir::{Address, BranchTarget, Expr, FloatKind, Location, ValHint, Var};
 use crate::kb::AHashSet;
+use crate::lifter::SpaceManager;
 
 thread_local! {
     static STMT: Arena<Stmt> = Default::default();

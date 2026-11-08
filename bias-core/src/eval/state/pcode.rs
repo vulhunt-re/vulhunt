@@ -12,6 +12,7 @@ use crate::eval::state::register::{self, RegisterState};
 use crate::eval::state::traits::{State, StateOps};
 use crate::eval::state::unique::{self, UniqueState};
 use crate::ir::Address;
+use crate::lifter::SpaceManager;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -108,11 +109,11 @@ impl<O: ByteOrder> PCodeState<O> {
     }
 
     pub fn global_space_id(&self) -> AddressSpaceId {
-        self.language.space_id(self.language.default_space())
+        self.language.default_space_id()
     }
 
     pub fn register_space_id(&self) -> AddressSpaceId {
-        self.language.space_id(self.language.register_space())
+        self.language.register_space_id()
     }
 
     pub fn memory(&self) -> &PagedState {

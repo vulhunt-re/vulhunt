@@ -29,6 +29,47 @@ use crate::ir::{Address, BitSize, FloatKind, Var, VarView};
 use crate::kb::operand::Operand;
 use crate::region::MemoryReader;
 
+pub trait SpaceManager {
+    fn space_id(&self, space: u8) -> AddressSpaceId;
+    fn constant_space_id(&self) -> AddressSpaceId;
+    fn default_space_id(&self) -> AddressSpaceId;
+    fn register_space_id(&self) -> AddressSpaceId;
+    fn unique_space_id(&self) -> AddressSpaceId;
+}
+
+impl SpaceManager for Language {
+    fn space_id(&self, space: u8) -> AddressSpaceId {
+        let index = space as usize;
+        if space == self.constant_space() {
+            AddressSpaceId::constant_id(index)
+        } else if space == self.default_space() {
+            AddressSpaceId::default_id(index)
+        } else if space == self.register_space() {
+            AddressSpaceId::register_id(index)
+        } else if space == self.unique_space() {
+            AddressSpaceId::unique_id(index)
+        } else {
+            AddressSpaceId::other_id(index)
+        }
+    }
+
+    fn constant_space_id(&self) -> AddressSpaceId {
+        AddressSpaceId::constant_id(self.constant_space() as usize)
+    }
+
+    fn default_space_id(&self) -> AddressSpaceId {
+        AddressSpaceId::default_id(self.default_space() as usize)
+    }
+
+    fn register_space_id(&self) -> AddressSpaceId {
+        AddressSpaceId::register_id(self.register_space() as usize)
+    }
+
+    fn unique_space_id(&self) -> AddressSpaceId {
+        AddressSpaceId::unique_id(self.unique_space() as usize)
+    }
+}
+
 #[derive(Clone)]
 pub struct LifterBuilder {
     language_db: LanguageDB,
@@ -468,7 +509,7 @@ impl Lifter {
                 ))?;
 
         let register_map = VarView::registers(language);
-        let register_space = language.space_id(language.register_space());
+        let register_space = language.register_space_id();
 
         let program_counter = language.program_counter();
         let program_counter = Var::new(
@@ -629,7 +670,7 @@ impl Lifter {
     }
 
     pub fn global_space_id(&self) -> AddressSpaceId {
-        self.language.space_id(self.language.default_space())
+        self.language.default_space_id()
     }
 
     pub fn register_map(&self) -> &Arc<VarView> {
@@ -637,7 +678,7 @@ impl Lifter {
     }
 
     pub fn register_space_id(&self) -> AddressSpaceId {
-        self.language.space_id(self.language.register_space())
+        self.language.register_space_id()
     }
 
     pub fn register_var(&self, name: &str) -> Option<Var> {
@@ -651,7 +692,7 @@ impl Lifter {
     }
 
     pub fn temporary_space_id(&self) -> AddressSpaceId {
-        self.language.space_id(self.language.unique_space())
+        self.language.unique_space_id()
     }
 
     pub fn language(&self) -> &'static Language {
